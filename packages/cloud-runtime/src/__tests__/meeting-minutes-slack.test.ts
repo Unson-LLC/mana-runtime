@@ -87,6 +87,7 @@ describe("MeetingMinutesSlackClient", () => {
 
   it("persists terminal readback only after Slack returns the exact updated source message", async () => {
     let updateText = "";
+    let authRequest: RequestInit | undefined;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url.includes("assistant.threads.setStatus")) return Response.json({ ok: true });
@@ -94,7 +95,10 @@ describe("MeetingMinutesSlackClient", () => {
         updateText = String(JSON.parse(String(init?.body)).text);
         return Response.json({ ok: true });
       }
-      if (url.includes("auth.test")) return Response.json({ ok: true, team_id: "T1", bot_id: "B1" });
+      if (url.includes("auth.test")) {
+        authRequest = init;
+        return Response.json({ ok: true, team_id: "T1", bot_id: "B1" });
+      }
       if (url.includes("conversations.replies")) return Response.json({ ok: true, messages: [{
         type: "message", ts: "3.1", thread_ts: "1.0", app_id: "A1", bot_id: "B1", text: updateText,
       }] });
@@ -106,6 +110,9 @@ describe("MeetingMinutesSlackClient", () => {
     });
     expect(run.terminalSlackReadback).toMatchObject({ outcome: "completed", channel: "C1", ts: "3.1",
       bodyHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) });
+    expect(authRequest).toMatchObject({ method: "POST", headers: { Authorization: "Bearer token" } });
+    expect(authRequest?.headers).not.toHaveProperty("Content-Type");
+    expect(authRequest?.body).toBeUndefined();
   });
 
   it("does not render an in-progress diagnostic checkpoint as a completed-run failure", async () => {

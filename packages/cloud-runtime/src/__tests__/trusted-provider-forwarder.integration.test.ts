@@ -122,6 +122,8 @@ const FORWARD_CASES: ForwardCase[] = [
   { label: "Slack POST API", operation: "slack.chat.postMessage.post",
     request: () => jsonRequest("https://slack.com/api/chat.postMessage", "POST", { channel: "C-A", text: "hello" }),
     wireRequest: { body: { channel: "C-A", text: "hello" } } },
+  { label: "Slack auth.test POST without a body", operation: "slack.auth.test.post",
+    request: () => jsonRequest("https://slack.com/api/auth.test", "POST"), wireRequest: {} },
   { label: "Slack GET API", operation: "slack.files.info.get",
     request: () => jsonRequest("https://slack.com/api/files.info?file=F-A", "GET"), wireRequest: { query: { file: "F-A" } } },
   { label: "Slack file download", operation: "slack.files.download",
