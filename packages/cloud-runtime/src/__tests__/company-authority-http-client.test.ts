@@ -149,6 +149,37 @@ function clientsWithResponse(
 }
 
 describe("Brainbase-owned company authority HTTP client", () => {
+  it("preserves an observed project alias and resource binding when refreshing canonical authority", async () => {
+    const captures: unknown[] = [];
+    const context = canonicalContext("company_authority_v1", "external_side_effect");
+    context.authorization.project_ids = ["prj_01KGHVCMA35JHSMXTSWQAS04PS"];
+    context.authorization.data_scopes = context.authorization.data_scopes.map((scope) => (
+      scope.startsWith("company_authority:resource:")
+        ? "company_authority:resource:project:mana@12"
+        : scope
+    ));
+    const clients = clientsWithResponse(context, captures, { company_authority_v1: "external_side_effect" });
+
+    await clients.authority.issue_tenant_context({
+      ...request(),
+      required_authorization: {
+        audience: "mana-runtime",
+        project_id: "prj_01KGHVCMA35JHSMXTSWQAS04PS",
+        capability_id: "company_authority_v1",
+      },
+      authority_resource_ref: "project:mana#payload_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      authority_project_hint: "mana",
+    });
+
+    expect((captures[0] as { requested_action: Record<string, unknown> }).requested_action)
+      .toMatchObject({
+        capability_id: "company_authority_v1",
+        project_hint: "mana",
+        resource_ref: "project:mana#payload_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        desired_effect: "external_side_effect",
+      });
+  });
+
   it("sends the placement trusted project set and rejects a signed set with extra projects", async () => {
     const captures: unknown[] = [];
     const context = canonicalContext();

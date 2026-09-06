@@ -971,6 +971,7 @@ async function reissueLongRunningTenantContext(
   accepted: TenantContextEnvelope,
   expectedScope: ExpectedTenantScope,
   authorizationDesiredEffect?: CompanyAuthorityDesiredEffect,
+  authorityBinding?: { resource_ref: string; project_hint?: string },
 ): Promise<TenantContextEnvelope> {
   const projectIds = [...(expectedScope.project_ids ?? accepted.authorization.project_ids)];
   if (projectIds.length === 0 || !projectIds.includes(expectedScope.project_id)
@@ -999,6 +1000,12 @@ async function reissueLongRunningTenantContext(
       capability_id: expectedScope.capability_id,
     },
     trusted_project_ids: projectIds,
+    ...(authorityBinding ? {
+      authority_resource_ref: authorityBinding.resource_ref,
+      ...(authorityBinding.project_hint
+        ? { authority_project_hint: authorityBinding.project_hint }
+        : {}),
+    } : {}),
     tenant_revision: accepted.tenant.tenant_revision,
     authority: clients.authority,
     now: new Date().toISOString(),
@@ -2508,6 +2515,12 @@ export async function executeCompanyAuthorityReplyOperation(
                   tenantContext,
                   expectedScope,
                   request.requested_action.desired_effect,
+                  {
+                    resource_ref: request.requested_action.resource_ref,
+                    ...(request.requested_action.project_hint
+                      ? { project_hint: request.requested_action.project_hint }
+                      : {}),
+                  },
                 );
                 activeTenantBoundaryExpiresAt = fresh.expires_at;
                 return fresh;
