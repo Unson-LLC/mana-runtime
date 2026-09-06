@@ -44,6 +44,10 @@ export interface TenantContextIssueRequest {
   };
   /** Trusted project scope resolved from the runtime placement, never from Slack input. */
   trusted_project_ids?: readonly string[];
+  /** Preserve the signed Company Authority resource binding when refreshing a long-running operation. */
+  authority_resource_ref?: string;
+  /** Preserve the observed project alias used to resolve the canonical project. */
+  authority_project_hint?: string;
   /** Canonical actor identity. Slack ingress omits this and defaults to the Slack requester. */
   provider_identity?: {
     provider: "slack" | "service";
