@@ -3288,9 +3288,10 @@ export default {
         if (await gate.isIntakePaused()) {
           return Response.json({ ok: false, stage: "authorization", code: "meeting_minutes_intake_paused" }, { status: 409 });
         }
+        // Also clean up if the write succeeds but its response is lost.
+        gateActive = true;
         await gate.markActive({ runId: probeRunId, startedAt: now(),
           deadlineAt: new Date(Date.now() + 900_000).toISOString() });
-        gateActive = true;
         stage = "execution";
         const result = await executeTenantRuntimeOperation({ tenant_context: context, expected_scope: expectedScope,
           verifier, quota: clients.quota, accounting: clients.accounting,
