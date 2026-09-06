@@ -43,6 +43,8 @@ export function classifyMeetingMinutesRunReceiptFailure(error: unknown): Meeting
     meeting_minutes_run_receipt_readback_unconfirmed: ["RUN_RECEIPT_READBACK_UNCONFIRMED", false],
     meeting_minutes_run_receipt_request_transport_failed: ["RUN_RECEIPT_INGEST_TRANSPORT_FAILED", true],
     meeting_minutes_run_receipt_readback_transport_failed: ["RUN_RECEIPT_READBACK_TRANSPORT_FAILED", true],
+    meeting_minutes_run_receipt_authority_unavailable: ["RUN_RECEIPT_AUTHORITY_UNAVAILABLE", true],
+    meeting_minutes_run_receipt_authority_rejected: ["RUN_RECEIPT_AUTHORITY_REJECTED", false],
   };
   const classified = exact[message];
   if (classified) return { stage, code: classified[0], retryable: classified[1] };
