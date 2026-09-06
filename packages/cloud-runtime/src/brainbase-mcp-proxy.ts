@@ -27,12 +27,15 @@ export async function handleBrainbaseMcpProxyRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
   const isAllowedPath = url.pathname === BRAINBASE_MCP_PROXY_PATH || url.pathname === BRAINBASE_JUDGMENT_HOOK_PROXY_PATH;
-  if (url.hostname !== BRAINBASE_MCP_PROXY_HOST || !isAllowedPath || request.method !== "POST") {
+  const allowedMethod = url.pathname === BRAINBASE_MCP_PROXY_PATH
+    ? ["POST", "GET", "DELETE"].includes(request.method)
+    : request.method === "POST";
+  if (url.hostname !== BRAINBASE_MCP_PROXY_HOST || !isAllowedPath || !allowedMethod) {
     return Response.json({ error: { code: "BRAINBASE_OPERATION_FORBIDDEN", retryable: false } }, { status: 403 });
   }
   // This policy is supplied by the verified durable boundary, never by model
   // request headers. Tool discovery/annotations do not authorize tool calls.
-  if (policy && url.pathname === BRAINBASE_MCP_PROXY_PATH) {
+  if (policy && url.pathname === BRAINBASE_MCP_PROXY_PATH && request.method === "POST") {
     let allowed = false;
     try {
       const body = await request.clone().json() as Record<string, unknown>;
@@ -66,7 +69,11 @@ export async function handleBrainbaseMcpProxyRequest(
   }
   try {
     const response = await (fetchImpl ?? fetch)(`${env.BRAINBASE_MCP_BASE_URL.replace(/\/$/, "")}${url.pathname}`, {
-      method: "POST", headers, body: request.body, redirect: "manual", signal: AbortSignal.timeout(30_000),
+      method: request.method,
+      headers,
+      body: request.method === "POST" ? request.body : undefined,
+      redirect: "manual",
+      signal: AbortSignal.timeout(30_000),
     });
     if (response.status >= 300 && response.status < 400) {
       return Response.json({ error: { code: "BRAINBASE_UPSTREAM_REDIRECT_REJECTED", retryable: false } }, { status: 502 });

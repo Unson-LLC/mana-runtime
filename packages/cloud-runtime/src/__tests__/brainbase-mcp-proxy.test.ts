@@ -2,6 +2,26 @@ import { describe, expect, it, vi } from "vitest";
 import { handleBrainbaseMcpProxyRequest } from "../brainbase-mcp-proxy.js";
 
 describe("Brainbase judgment Hook proxy", () => {
+  it.each(["GET", "DELETE"])("forwards the %s MCP session transport request", async (method) => {
+    const forward = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe("https://bb.example.test/mcp");
+      expect(init?.method).toBe(method);
+      expect(new Headers(init?.headers).get("mcp-session-id")).toBe("session-transport");
+      expect(init?.body).toBeUndefined();
+      return new Response(null, { status: 204 });
+    });
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", {
+        method,
+        headers: { "mcp-session-id": "session-transport" },
+      }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.example.test", BRAINBASE_MCP_TOKEN: "token" },
+      forward as typeof fetch,
+      { allowedTools: ["brainbase_resolve_turn"] },
+    );
+    expect(response.status).toBe(204);
+  });
+
   it.each([
     "{", "null", "[]",
     JSON.stringify([{ jsonrpc: "2.0", method: "tools/call", params: { name: "brainbase_admin_write" } }]),
