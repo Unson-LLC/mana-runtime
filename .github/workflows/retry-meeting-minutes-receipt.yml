@@ -1,0 +1,145 @@
+name: 失敗済み議事録のRunReceiptを再送
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 状態確認またはRunReceipt再送（Slack投稿等は再実行しない）
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - retry
+      run_id:
+        description: 再送する議事録run ID
+        required: true
+        type: string
+      tenant_id:
+        description: 対象tenant ID
+        required: true
+        type: string
+      workspace_id:
+        description: 対象Slack workspace ID
+        required: true
+        type: string
+      reason:
+        description: 再送理由（監査用）
+        required: true
+        type: string
+
+concurrency:
+  group: meeting-minutes-receipt-${{ inputs.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  retry-receipt:
+    name: 保存済み権限を再照合してRunReceiptを再送
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://unson-business-mana-runtime.unson.workers.dev
+    steps:
+      - name: 入力形式を検証
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          TENANT_ID: ${{ inputs.tenant_id }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[A-Za-z0-9_-]{3,260}$ ]]
+          [[ "$TENANT_ID" =~ ^[A-Za-z0-9_-]{3,128}$ ]]
+          [[ "$WORKSPACE_ID" =~ ^[A-Z0-9]{3,32}$ ]]
+
+      - name: 状態確認またはRunReceiptを再送
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          TENANT_ID: ${{ inputs.tenant_id }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+          OPERATION: ${{ inputs.operation }}
+          RETRY_REASON: ${{ inputs.reason }}
+          SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$SANDBOX_PROBE_TOKEN"
+          action_ts="$(date +%s.%3N)"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          request_json() {
+            local status
+            status="$(curl -sS --connect-timeout 15 --max-time 30 -o "$response_file" -w '%{http_code}' "$@")" || status="000"
+            jq -e . "$response_file" >/dev/null 2>&1 || printf '{"error":"RUN_RECEIPT_DELIVERY_FAILED"}' > "$response_file"
+            printf '%s' "$status"
+          }
+          safe_code() {
+            case "$(jq -r '.error // .runReceipt.failure.code // "RUN_RECEIPT_DELIVERY_FAILED"' "$response_file")" in
+              RUN_RECEIPT_AUTHORITY_UNAVAILABLE|RUN_RECEIPT_AUTHORITY_REJECTED|meeting_minutes_admin_retry_run_receipt_stale)
+                jq -r '.error // .runReceipt.failure.code' "$response_file" ;;
+              RUN_RECEIPT_[A-Z_][A-Z_]*)
+                jq -r '.error // .runReceipt.failure.code' "$response_file" ;;
+              *) printf '%s' 'RUN_RECEIPT_DELIVERY_FAILED' ;;
+            esac
+          }
+          print_status() {
+            jq '
+              def timestamp: if type == "string" and test("^[0-9TZ:.-]{20,30}$") then . else null end;
+              def identifier: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;
+              def code: if type == "string" and test("^RUN_RECEIPT_[A-Z_]{3,96}$") then . else null end;
+              {runId: (.runId | identifier), status: .status,
+               runReceipt: (if (.runReceipt | type) == "object" then {
+                 status: (.runReceipt.status | if . == "pending" or . == "delivered" then . else null end),
+                 receiptId: (.runReceipt.receiptId | identifier),
+                 deliveredAt: (.runReceipt.deliveredAt | timestamp),
+                 failure: (if (.runReceipt.failure | type) == "object" then {
+                   stage: (.runReceipt.failure.stage | if . == "run_receipt" then . else null end),
+                   code: (.runReceipt.failure.code | code), retryable: (.runReceipt.failure.retryable | if type == "boolean" then . else null end),
+                   failedAt: (.runReceipt.failure.failedAt | timestamp)
+                 } else null end)
+               } else null end)}' "$response_file"
+          }
+          status="$(request_json -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" --get \
+            --data-urlencode "tenant_id=$TENANT_ID" --data-urlencode "workspace_id=$WORKSPACE_ID" \
+            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-status")"
+          if [[ "$status" != "200" ]] || ! jq -e --arg runId "$RUN_ID" '.runId == $runId' "$response_file" >/dev/null; then
+            echo "状態確認失敗: $(safe_code)" >&2
+            exit 1
+          fi
+          if [[ "$OPERATION" == "status" ]]; then
+            print_status
+            echo "状態確認のみ。RunReceipt再送・外部送信なし。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ "$OPERATION" == "retry" ]]
+          if jq -e '.runReceipt.failure.stage == "run_receipt" and .runReceipt.failure.retryable == false' "$response_file" >/dev/null; then
+            echo "RunReceiptは再送不可: $(safe_code)" >&2
+            print_status
+            exit 1
+          fi
+          status="$(request_json -X POST -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" -H 'Content-Type: application/json' \
+            --data "$(jq -cn --arg tenantId "$TENANT_ID" --arg workspaceId "$WORKSPACE_ID" --arg actionTs "$action_ts" \
+              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs}')" \
+            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-receipt-retry")"
+          if [[ "$status" != "200" ]] || ! jq -e --arg runId "$RUN_ID" '$runId == .runId and .runReceipt.status == "delivered" and (.runReceipt.receiptId // "") != "" and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
+            echo "RunReceipt再送失敗: $(safe_code)" >&2
+            exit 1
+          fi
+          status="$(request_json -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" --get \
+            --data-urlencode "tenant_id=$TENANT_ID" --data-urlencode "workspace_id=$WORKSPACE_ID" \
+            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-status")"
+          if [[ "$status" != "200" ]] || ! jq -e --arg runId "$RUN_ID" '$runId == .runId and .runReceipt.status == "delivered" and (.runReceipt.receiptId // "") != "" and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
+            echo "RunReceipt読戻し失敗: $(safe_code)" >&2
+            exit 1
+          fi
+          {
+            echo "## 議事録RunReceipt再送"
+            echo "- run ID: \`$RUN_ID\`"
+            echo "- 理由: $RETRY_REASON"
+            echo "- 結果: Brainbase RunReceiptの再送と読戻しを確認"
+            echo "- 範囲外: Slack、GitHub、タスク登録、タスクカード、議事録生成は再実行しない"
+          } >> "$GITHUB_STEP_SUMMARY"

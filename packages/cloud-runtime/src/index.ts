@@ -649,6 +649,8 @@ const MEETING_MINUTES_RUN_RECEIPT_FAILURE_CODES = new Set([
   "RUN_RECEIPT_DELIVERY_FAILED",
   "RUN_RECEIPT_INGEST_TRANSPORT_FAILED",
   "RUN_RECEIPT_READBACK_TRANSPORT_FAILED",
+  "RUN_RECEIPT_AUTHORITY_UNAVAILABLE",
+  "RUN_RECEIPT_AUTHORITY_REJECTED",
 ]);
 
 function meetingMinutesAdminRunReceiptFailure(failure: unknown):
@@ -681,6 +683,28 @@ function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
     checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
       postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0,
       hasTaskCard: Boolean(run.slack?.taskCardTs) } };
+}
+
+/** A concurrent receipt update is not an authority or delivery failure. */
+class MeetingMinutesRunReceiptRetryStaleError extends Error {
+  constructor() {
+    super("meeting_minutes_admin_retry_run_receipt_stale");
+    this.name = "MeetingMinutesRunReceiptRetryStaleError";
+  }
+}
+
+/** Return only stable, operator-safe codes for the receipt-only retry route. */
+function meetingMinutesRunReceiptRetryErrorResponse(error: unknown): Response {
+  if (error instanceof MeetingMinutesRunReceiptRetryStaleError) {
+    return Response.json({ error: "meeting_minutes_admin_retry_run_receipt_stale" }, { status: 409 });
+  }
+  if (error instanceof TenantBoundaryError) {
+    if (error.code === "AUTHORITY_UNAVAILABLE" || error.code === "WORKSPACE_CONNECTION_UNAVAILABLE") {
+      return Response.json({ error: "RUN_RECEIPT_AUTHORITY_UNAVAILABLE" }, { status: 503 });
+    }
+    return Response.json({ error: "RUN_RECEIPT_AUTHORITY_REJECTED" }, { status: 403 });
+  }
+  return Response.json({ error: "RUN_RECEIPT_DELIVERY_FAILED" }, { status: 502 });
 }
 
 function meetingMinutesRecoveryAuthorization(
@@ -3534,9 +3558,15 @@ export default {
         run.runReceipt.idempotencyKey !== receipt.delivery.idempotency_key) {
         return Response.json({ error: "meeting_minutes_admin_retry_run_receipt_not_retryable" }, { status: 409 });
       }
-      const { context, expectedScope, operationIdentity } = await meetingMinutesRunReceiptRetryContext(
-        env, run, receipt.delivery.idempotency_key, actionTs,
-      );
+      let receiptRetryContext: Awaited<ReturnType<typeof meetingMinutesRunReceiptRetryContext>>;
+      try {
+        receiptRetryContext = await meetingMinutesRunReceiptRetryContext(
+          env, run, receipt.delivery.idempotency_key, actionTs,
+        );
+      } catch (error) {
+        return meetingMinutesRunReceiptRetryErrorResponse(error);
+      }
+      const { context, expectedScope, operationIdentity } = receiptRetryContext;
       const clients = tenantRuntimeClients(env, context, tenantConfiguredDesiredEffectByCapability(env));
       const verifier = new TenantRuntimeBoundaryVerifier({
         read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
@@ -3559,7 +3589,7 @@ export default {
               if (!current || (current.revision ?? 0) !== revision || current.runReceipt?.status !== "pending"
                 || current.runReceipt.idempotencyKey !== receipt.delivery.idempotency_key
                 || currentReceipt?.delivery.idempotency_key !== receipt.delivery.idempotency_key) {
-                deny("durable_object", "CROSS_TENANT_CANDIDATE");
+                throw new MeetingMinutesRunReceiptRetryStaleError();
               }
               const retried = await retryMeetingMinutesRunReceipt(workspace.fs, current,
                 (nextReceipt) => effects.boundary("brainbase_proxy", () => new MeetingMinutesRunReceiptClient(
@@ -3580,8 +3610,7 @@ export default {
           runReceipt: { idempotencyKey: receipt.delivery.idempotency_key, status: "delivered",
             receiptId: retryResult.receiptId, deliveredAt: retryResult.deliveredAt } });
       } catch (error) {
-        return Response.json({ error: error instanceof TenantBoundaryError
-          ? error.code : "meeting_minutes_admin_retry_run_receipt_failed" }, { status: 502 });
+        return meetingMinutesRunReceiptRetryErrorResponse(error);
       }
     }
     const authorizedStatusMatch = url.pathname.match(

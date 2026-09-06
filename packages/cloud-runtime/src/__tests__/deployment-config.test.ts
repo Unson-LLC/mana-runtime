@@ -816,40 +816,26 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt,");
     expect(worker).toContain("const failure = meetingMinutesAdminRunReceiptFailure(run.runReceipt?.failure);");
     expect(worker).toContain("...(failure ? { failure } : {}) } : undefined,");
-    const retryWorkflow = readFileSync(fileURLToPath(new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
-    expect(retryWorkflow).toContain("name: 失敗済み議事録のRunReceiptを再送");
-    expect(retryWorkflow).toContain("RunReceipt再送（Slack投稿等は再実行しない）");
-    expect(retryWorkflow).not.toContain("outcome_case_id:");
-    expect(retryWorkflow).toContain(
-      '              def safe_identifier_or_null: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;',
-    );
-    expect(retryWorkflow).toContain("                outcomeCaseId: (.outcomeCaseId | safe_identifier_or_null),");
-    expect(retryWorkflow).toContain("                    caseId: (.runReceipt.caseId | safe_identifier_or_null),");
-    expect(retryWorkflow).toContain("                    receiptId: (.runReceipt.receiptId | safe_identifier_or_null),");
-    expect(retryWorkflow).toContain('                    status: (.runReceipt.status | one_of(["pending","delivered"])),');
-    expect(retryWorkflow).toContain('                      stage: (.runReceipt.failure.stage | one_of(["run_receipt"])),');
-    expect(retryWorkflow).toContain('                      code: (.runReceipt.failure.code | safe_run_receipt_code),');
-    expect(retryWorkflow).toContain('                      retryable: (.runReceipt.failure.retryable | bool_or_null),');
-    expect(retryWorkflow).toContain(
-      "              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs}')",
-    );
-    const retryBodyStart = retryWorkflow.indexOf('            --data "$(jq -cn');
-    const retryBodyEnd = retryWorkflow.indexOf(
-      '            "https://unson-business-mana-runtime',
-      retryBodyStart,
-    );
-    expect(retryBodyStart).toBeGreaterThan(-1);
-    expect(retryBodyEnd).toBeGreaterThan(retryBodyStart);
-    expect(retryWorkflow.slice(retryBodyStart, retryBodyEnd)).not.toContain("SANDBOX_PROBE_TOKEN");
-    expect(retryWorkflow).not.toContain('echo "$SANDBOX_PROBE_TOKEN"');
-    expect(retryWorkflow).not.toContain("jq -n --arg token \"$SANDBOX_PROBE_TOKEN\"");
-    expect(retryWorkflow).toContain('.runReceipt.status == "delivered"');
-    expect(retryWorkflow).toContain("RunReceipt has a non-retryable contract failure; it was not resent");
-    expect(retryWorkflow).toContain("print_safe_run_receipt_failure");
-    expect(retryWorkflow).toContain("結果: Brainbase RunReceiptの再送と読戻しを確認");
-    expect(retryWorkflow).toContain("範囲外: Slack、GitHub、タスク登録、タスクカードは再実行しない");
-    expect(retryWorkflow).toContain("failurePoint: (.failurePoint");
-    expect(retryWorkflow).toContain("scopeReason: (if .scopeReason");
+    const fullRetryWorkflow = readFileSync(fileURLToPath(
+      new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
+    expect(fullRetryWorkflow).toContain("name: 失敗済み議事録を再実行");
+    expect(fullRetryWorkflow).toContain("状態確認または再実行（再実行はSlack投稿等を伴う）");
+    expect(fullRetryWorkflow).toContain("outcome_case_id:");
+    expect(fullRetryWorkflow).toContain("/authorized-retry");
+    expect(fullRetryWorkflow).toContain(".enqueued == true");
+    expect(fullRetryWorkflow).toContain("GitHub保存、Slack投稿、タスク登録、タスクカード投稿まで完了");
+    const receiptRetryWorkflow = readFileSync(fileURLToPath(
+      new URL("../../../../.github/workflows/retry-meeting-minutes-receipt.yml", import.meta.url)), "utf8");
+    expect(receiptRetryWorkflow).toContain("name: 失敗済み議事録のRunReceiptを再送");
+    expect(receiptRetryWorkflow).toContain("RunReceipt再送（Slack投稿等は再実行しない）");
+    expect(receiptRetryWorkflow).not.toContain("outcome_case_id:");
+    expect(receiptRetryWorkflow).toContain("/authorized-receipt-retry");
+    expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_UNAVAILABLE");
+    expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_REJECTED");
+    expect(receiptRetryWorkflow).toContain("meeting_minutes_admin_retry_run_receipt_stale");
+    expect(receiptRetryWorkflow).toContain("範囲外: Slack、GitHub、タスク登録、タスクカード、議事録生成は再実行しない");
+    expect(receiptRetryWorkflow).not.toContain('echo "$SANDBOX_PROBE_TOKEN"');
+    expect(receiptRetryWorkflow).not.toContain("jq -n --arg token \"$SANDBOX_PROBE_TOKEN\"");
     expect(worker).toContain('runAdminMatch[2] === "/adopt-tasks"');
     expect(worker).toContain("meeting_minutes_task_adoption_scope_mismatch");
     expect(worker).toContain("const incompleteAdoption =");
