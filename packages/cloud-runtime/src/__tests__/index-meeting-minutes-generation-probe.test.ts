@@ -146,6 +146,24 @@ function request(payload: unknown, options: { authorization?: string } = {}): Re
   );
 }
 
+function authorizedRetryRequest(payload: unknown, options: { authorization?: string } = {}): Request {
+  const headers = new Headers({ "content-type": "application/json" });
+  if (options.authorization !== undefined) headers.set("authorization", options.authorization);
+  return new Request(
+    `https://example.com/admin/meeting-minutes/runs/${RUN_ID}/authorized-retry`,
+    { method: "POST", headers, body: JSON.stringify(payload) },
+  );
+}
+
+function authorizedStatusRequest(options: { authorization?: string } = {}): Request {
+  const headers = new Headers();
+  if (options.authorization !== undefined) headers.set("authorization", options.authorization);
+  return new Request(
+    `https://example.com/admin/meeting-minutes/runs/${RUN_ID}/authorized-status?tenant_id=${TENANT_ID}&workspace_id=${WORKSPACE_ID}`,
+    { headers },
+  );
+}
+
 async function fetchWorker(input: Request, env: Record<string, unknown> = bindings()): Promise<Response> {
   return worker.fetch(input, env as never, {} as never);
 }
@@ -232,5 +250,62 @@ describe("authorized meeting-minutes generation probe route", () => {
       code: "CROSS_TENANT_CANDIDATE",
     });
     expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-retryable receipt failure before reissuing context or sending the retry event", async () => {
+    const events = { send: vi.fn() };
+    runtimeMocks.loadRun.mockResolvedValue(run({ runReceipt: {
+      idempotencyKey: "meeting-minutes:run-001",
+      status: "pending",
+      failure: { stage: "run_receipt", code: "RUN_RECEIPT_OUTCOME_CASE_LINK_UNCONFIRMED",
+        retryable: false, failedAt: "2026-09-06T00:00:01.000Z" },
+    } }));
+
+    const response = await fetchWorker(authorizedRetryRequest({ tenantId: TENANT_ID,
+      workspaceId: WORKSPACE_ID, actionTs: "100.200" }, {
+      authorization: `Bearer ${ADMIN_TOKEN}`,
+    }), bindings({ TECHKNIGHT_EVENTS: events }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "meeting_minutes_admin_retry_run_receipt_non_retryable",
+    });
+    expect(runtimeMocks.createClients).not.toHaveBeenCalled();
+    expect(events.send).not.toHaveBeenCalled();
+  });
+
+  it("returns only the four supported receipt failure diagnostics from authorized status", async () => {
+    runtimeMocks.loadRun.mockResolvedValue(run({ runReceipt: {
+      idempotencyKey: "meeting-minutes:run-001",
+      status: "pending",
+      failure: {
+        stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+        failedAt: "2026-09-06T00:00:01.000Z", upstreamResponse: "must-not-leak",
+      } as never,
+    } }));
+
+    const response = await fetchWorker(authorizedStatusRequest({ authorization: `Bearer ${ADMIN_TOKEN}` }));
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { runReceipt?: { failure?: unknown } };
+    expect(body.runReceipt?.failure).toEqual({
+      stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+      failedAt: "2026-09-06T00:00:01.000Z",
+    });
+  });
+
+  it("omits malformed receipt failure diagnostics from authorized status", async () => {
+    runtimeMocks.loadRun.mockResolvedValue(run({ runReceipt: {
+      idempotencyKey: "meeting-minutes:run-001",
+      status: "pending",
+      failure: { stage: "run_receipt", code: "raw upstream error", retryable: false,
+        failedAt: "not-a-timestamp", upstreamResponse: "must-not-leak" } as never,
+    } }));
+
+    const response = await fetchWorker(authorizedStatusRequest({ authorization: `Bearer ${ADMIN_TOKEN}` }));
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { runReceipt?: { failure?: unknown } };
+    expect(body.runReceipt?.failure).toBeUndefined();
   });
 });

@@ -92,6 +92,29 @@ jobs:
             done
             return 1
           }
+          print_safe_run_receipt_failure() {
+            jq '
+              def timestamp: if type == "string" and test("^[0-9TZ:.-]{20,30}$") then . else null end;
+              def safe_identifier_or_null: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;
+              def safe_run_receipt_code: if type == "string" and test("^RUN_RECEIPT_[A-Z_]{3,96}$") then . else null end;
+              {
+                runId: (.runId | safe_identifier_or_null),
+                status: (.status | if . == "completed" then . else null end),
+                updatedAt: (.updatedAt | timestamp),
+                outcomeCaseId: (.outcomeCaseId | safe_identifier_or_null),
+                runReceipt: (if (.runReceipt | type) == "object" then {
+                  caseId: (.runReceipt.caseId | safe_identifier_or_null),
+                  receiptId: (.runReceipt.receiptId | safe_identifier_or_null),
+                  status: (.runReceipt.status | if . == "pending" or . == "delivered" then . else null end),
+                  failure: (if (.runReceipt.failure | type) == "object" then {
+                    stage: (.runReceipt.failure.stage | if . == "run_receipt" then . else null end),
+                    code: (.runReceipt.failure.code | safe_run_receipt_code),
+                    retryable: (if (.runReceipt.failure.retryable | type) == "boolean" then .runReceipt.failure.retryable else null end),
+                    failedAt: (.runReceipt.failure.failedAt | timestamp)
+                  } else null end)
+                } else null end)
+              }' "$response_file"
+          }
           status="$(request_json \
             -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
             --get \
@@ -108,6 +131,7 @@ jobs:
               def timestamp: if type == "string" and test("^[0-9TZ:.-]{20,30}$") then . else null end;
               def action_timestamp: if type == "string" and test("^[0-9]{1,20}(\\.[0-9]{1,12})?$") then . else null end;
               def safe_identifier_or_null: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;
+              def safe_run_receipt_code: if type == "string" and test("^RUN_RECEIPT_[A-Z_]{3,96}$") then . else null end;
               {
                 status: (.status | one_of(["awaiting_destination","routed","generated","github_saved","posting","completed","failed"])),
                 updatedAt: (.updatedAt | timestamp),
@@ -121,7 +145,13 @@ jobs:
                     caseId: (.runReceipt.caseId | safe_identifier_or_null),
                     receiptId: (.runReceipt.receiptId | safe_identifier_or_null),
                     status: (.runReceipt.status | one_of(["pending","delivered"])),
-                    deliveredAt: (.runReceipt.deliveredAt | timestamp)
+                    deliveredAt: (.runReceipt.deliveredAt | timestamp),
+                    failure: (if (.runReceipt.failure | type) == "object" then {
+                      stage: (.runReceipt.failure.stage | one_of(["run_receipt"])),
+                      code: (.runReceipt.failure.code | safe_run_receipt_code),
+                      retryable: (.runReceipt.failure.retryable | bool_or_null),
+                      failedAt: (.runReceipt.failure.failedAt | timestamp)
+                    } else null end)
                   } else null end
                 ),
                 checkpoint: {
@@ -176,6 +206,12 @@ jobs:
             expected_outcome_case_id="$baseline_outcome_case_id"
           fi
           test -n "$expected_outcome_case_id"
+          if jq -e '.runReceipt.failure.stage == "run_receipt" and .runReceipt.failure.retryable == false' \
+            "$response_file" >/dev/null; then
+            echo "Run receipt has a non-retryable contract failure; retry was not enqueued" >&2
+            print_safe_run_receipt_failure
+            exit 1
+          fi
           status="$(request_json \
             -X POST \
             -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
@@ -252,6 +288,12 @@ jobs:
                 and .checkpoint.hasTaskCard == true' "$response_file" >/dev/null; then
                 echo "Fresh retry completed with an incomplete task integration" >&2
                 jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+                exit 1
+              fi
+              if jq -e '.runReceipt.failure.stage == "run_receipt" and .runReceipt.failure.retryable == false' \
+                "$response_file" >/dev/null; then
+                echo "Fresh retry has a non-retryable run receipt contract failure" >&2
+                print_safe_run_receipt_failure
                 exit 1
               fi
               if jq -e --arg expectedOutcomeCaseId "$expected_outcome_case_id" \

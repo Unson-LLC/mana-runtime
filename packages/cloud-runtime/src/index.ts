@@ -634,12 +634,39 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
   return [tenantId, workspaceId, "meeting-minutes", runId].join(":");
 }
 
+const MEETING_MINUTES_RUN_RECEIPT_FAILURE_CODES = new Set([
+  "RUN_RECEIPT_CLIENT_UNCONFIGURED",
+  "RUN_RECEIPT_INGEST_URL_INVALID",
+  "RUN_RECEIPT_INGEST_RESPONSE_INVALID",
+  "RUN_RECEIPT_OUTCOME_CASE_LINK_UNCONFIRMED",
+  "RUN_RECEIPT_READBACK_UNCONFIRMED",
+  "RUN_RECEIPT_TIMEOUT",
+  "RUN_RECEIPT_AUTHENTICATION_FAILED",
+  "RUN_RECEIPT_FORBIDDEN",
+  "RUN_RECEIPT_UPSTREAM_FAILED",
+  "RUN_RECEIPT_REQUEST_REJECTED",
+  "RUN_RECEIPT_DELIVERY_FAILED",
+]);
+
+function meetingMinutesAdminRunReceiptFailure(failure: unknown):
+  { stage: "run_receipt"; code: string; retryable: boolean; failedAt: string } | undefined {
+  if (typeof failure !== "object" || failure === null) return undefined;
+  const candidate = failure as { stage?: unknown; code?: unknown; retryable?: unknown; failedAt?: unknown };
+  if (candidate.stage !== "run_receipt" || typeof candidate.code !== "string" ||
+    !MEETING_MINUTES_RUN_RECEIPT_FAILURE_CODES.has(candidate.code) || typeof candidate.retryable !== "boolean" ||
+    typeof candidate.failedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(candidate.failedAt) ||
+    Number.isNaN(Date.parse(candidate.failedAt))) return undefined;
+  return { stage: "run_receipt", code: candidate.code, retryable: candidate.retryable, failedAt: candidate.failedAt };
+}
+
 function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
+  const failure = meetingMinutesAdminRunReceiptFailure(run.runReceipt?.failure);
   return { runId: run.runId, status: run.status, updatedAt: run.updatedAt,
     destinationId: run.destination?.id, outcomeCaseId: run.outcomeCaseId, diagnostics: run.diagnostics,
     processing: run.processing,
     runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,
-      status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt } : undefined,
+      status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt,
+      ...(failure ? { failure } : {}) } : undefined,
     taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
       pendingPresent: Boolean(run.taskRegistration?.pending),
       failure: run.taskRegistration?.failure,
@@ -3368,6 +3395,9 @@ export default {
       if (!authorization || authorization.tenantId !== tenantId ||
         authorization.workspaceId !== workspaceId || !run.destination || !run.sourceAppId) {
         return Response.json({ error: "meeting_minutes_admin_retry_not_authorized" }, { status: 409 });
+      }
+      if (run.runReceipt?.failure?.stage === "run_receipt" && run.runReceipt.failure.retryable === false) {
+        return Response.json({ error: "meeting_minutes_admin_retry_run_receipt_non_retryable" }, { status: 409 });
       }
       const selection: MeetingMinutesSelection = {
         kind: "meeting_minutes_selection",

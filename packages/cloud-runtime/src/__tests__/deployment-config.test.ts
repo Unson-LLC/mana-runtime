@@ -807,7 +807,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("processing: run.processing");
     expect(worker).toContain("outcomeCaseId: run.outcomeCaseId");
     expect(worker).toContain("runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,");
-    expect(worker).toContain("status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt }");
+    expect(worker).toContain("status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt,");
+    expect(worker).toContain("const failure = meetingMinutesAdminRunReceiptFailure(run.runReceipt?.failure);");
+    expect(worker).toContain("...(failure ? { failure } : {}) } : undefined,");
     const retryWorkflow = readFileSync(fileURLToPath(new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
     expect(retryWorkflow).toContain("      outcome_case_id:");
     expect(retryWorkflow).toContain("        required: false");
@@ -822,6 +824,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(retryWorkflow).toContain("                    caseId: (.runReceipt.caseId | safe_identifier_or_null),");
     expect(retryWorkflow).toContain("                    receiptId: (.runReceipt.receiptId | safe_identifier_or_null),");
     expect(retryWorkflow).toContain('                    status: (.runReceipt.status | one_of(["pending","delivered"])),');
+    expect(retryWorkflow).toContain('                      stage: (.runReceipt.failure.stage | one_of(["run_receipt"])),');
+    expect(retryWorkflow).toContain('                      code: (.runReceipt.failure.code | safe_run_receipt_code),');
+    expect(retryWorkflow).toContain('                      retryable: (.runReceipt.failure.retryable | bool_or_null),');
     expect(retryWorkflow).toContain("          baseline_outcome_case_id=\"$(jq -r '.outcomeCaseId // \"\"' \"$response_file\")\"");
     expect(retryWorkflow).toContain('          expected_outcome_case_id="$OUTCOME_CASE_ID"');
     expect(retryWorkflow).toContain('              --arg outcomeCaseId "$expected_outcome_case_id"');
@@ -854,6 +859,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(retryWorkflow).toContain(".runReceipt.caseId == $expectedOutcomeCaseId");
     expect(retryWorkflow).toContain("if ! jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true");
     expect(retryWorkflow).toContain("Fresh retry remained pending until the polling deadline");
+    expect(retryWorkflow).toContain("Run receipt has a non-retryable contract failure; retry was not enqueued");
+    expect(retryWorkflow).toContain("Fresh retry has a non-retryable run receipt contract failure");
+    expect(retryWorkflow).toContain("print_safe_run_receipt_failure");
     const pendingDeadline = retryWorkflow.indexOf("Fresh retry remained pending until the polling deadline");
     expect(pendingDeadline).toBeGreaterThan(-1);
     expect(retryWorkflow.lastIndexOf('if [[ "$attempt" == "90" ]]', pendingDeadline)).toBeLessThan(

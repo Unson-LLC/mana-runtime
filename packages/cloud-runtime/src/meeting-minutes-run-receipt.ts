@@ -11,6 +11,12 @@ export interface RunReceiptV1 {
 
 export interface ConfirmedRunReceiptDelivery { receiptId: string }
 
+export interface MeetingMinutesRunReceiptFailure {
+  stage: "run_receipt";
+  code: string;
+  retryable: boolean;
+}
+
 interface RunReceiptIngestResponse {
   status?: unknown;
   run?: { id?: unknown };
@@ -19,6 +25,38 @@ interface RunReceiptIngestResponse {
    * the receipt project and durably recorded the case-to-receipt relation.
    */
   outcome_case_links?: Array<{ case_id?: unknown; status?: unknown }>;
+}
+
+/**
+ * Converts only the client-owned, stable receipt boundary into durable
+ * diagnostics. In particular, response bodies and arbitrary Error properties
+ * remain transient because they can contain upstream content or credentials.
+ */
+export function classifyMeetingMinutesRunReceiptFailure(error: unknown): MeetingMinutesRunReceiptFailure {
+  const message = error instanceof Error ? error.message : "";
+  const stage = "run_receipt" as const;
+  const exact: Record<string, [string, boolean]> = {
+    meeting_minutes_run_receipt_client_unconfigured: ["RUN_RECEIPT_CLIENT_UNCONFIGURED", false],
+    meeting_minutes_run_receipt_ingest_url_invalid: ["RUN_RECEIPT_INGEST_URL_INVALID", false],
+    meeting_minutes_run_receipt_ingest_response_invalid: ["RUN_RECEIPT_INGEST_RESPONSE_INVALID", false],
+    meeting_minutes_run_receipt_outcome_case_link_unconfirmed: ["RUN_RECEIPT_OUTCOME_CASE_LINK_UNCONFIRMED", false],
+    meeting_minutes_run_receipt_readback_unconfirmed: ["RUN_RECEIPT_READBACK_UNCONFIRMED", false],
+  };
+  const classified = exact[message];
+  if (classified) return { stage, code: classified[0], retryable: classified[1] };
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return { stage, code: "RUN_RECEIPT_TIMEOUT", retryable: true };
+  }
+  const status = Number(message.match(/^meeting_minutes_run_receipt_(?:request|readback)_failed:(\d{3})$/)?.[1]);
+  if (Number.isInteger(status)) {
+    if (status === 401) return { stage, code: "RUN_RECEIPT_AUTHENTICATION_FAILED", retryable: false };
+    if (status === 403) return { stage, code: "RUN_RECEIPT_FORBIDDEN", retryable: false };
+    if (status === 408 || status === 425 || status === 429 || status >= 500) {
+      return { stage, code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true };
+    }
+    if (status >= 400) return { stage, code: "RUN_RECEIPT_REQUEST_REJECTED", retryable: false };
+  }
+  return { stage, code: "RUN_RECEIPT_DELIVERY_FAILED", retryable: true };
 }
 
 function hex(bytes: ArrayBuffer): string {
