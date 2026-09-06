@@ -413,6 +413,26 @@ describe("meeting minutes pipeline", () => {
     );
   });
 
+  it("refreshes bounded authorization after generation before GitHub, Slack, and task writes", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true,
+      routerChannelId: "CROUTER", sourceAppId: "A1", destinations: [destination],
+      requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const order: string[] = [];
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "期限切れ後も登録する" }] }),
+      refreshAuthorization: vi.fn(async () => { order.push("refresh"); }),
+      saveGitHub: vi.fn(async () => { order.push("github"); return {
+        transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" }; }),
+      postParent: vi.fn(async () => { order.push("slack"); return "10.1"; }),
+      createTask: vi.fn(async () => { order.push("task"); return { id: "task-1" }; }),
+    });
+
+    await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(order).toEqual(["refresh", "github", "refresh", "slack", "task"]);
+  });
+
   it("posts the parent summary, narrative chunks, then the task card last", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

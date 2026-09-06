@@ -28,6 +28,8 @@ export interface StartMeetingMinutesOptions {
 export interface ResumeMeetingMinutesOptions {
   destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
   contextMode: MeetingMinutesContextMode;
+  /** Reissue the same bounded tenant authority after a long model operation. */
+  refreshAuthorization?(): Promise<void>;
   resolveContext(identity: MeetingMinutesContextReceipt["identity"], receiptId?: string,
     projectId?: string): Promise<MeetingMinutesContextReceipt>;
   postProcessingStatus(run: MeetingMinutesRun): Promise<string>;
@@ -246,6 +248,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   }
   if (run.status === "completed") {
     if (run.taskRegistration?.failure && run.destination) {
+      await options.refreshAuthorization?.();
       const startAt = run.taskRegistration.failure.stage ?? "task_registration";
       return resumeMeetingMinutesTaskIntegration(fs, run, options, {
         startAt, reconcileBoard: startAt === "task_board",
@@ -310,11 +313,13 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         }
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
       }
+      await options.refreshAuthorization?.();
       diagnosticStage = "github_save";
       run.github = await options.saveGitHub({ destination: run.destination, transcript, minutes: run.generated,
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
+    await options.refreshAuthorization?.();
     if (!run.generated) throw new Error("meeting_minutes_saved_output_missing");
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = stripMeetingMinutesActionItems(run.generated!.body).trimStart();
