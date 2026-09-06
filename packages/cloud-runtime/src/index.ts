@@ -1,3 +1,4 @@
+import { runMeetingMinutesGenerationProbe } from "./meeting-minutes-generation-probe.js";
 import {
   getWorkspace,
   withWorkspace,
@@ -789,6 +790,51 @@ async function reissueMeetingMinutesAdminSelectionTenantContext(
     deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
   }
   return fresh;
+}
+
+/** Reauthorize a diagnostic operation without fabricating a Slack selection. */
+async function meetingMinutesGenerationProbeContext(env: Env, run: MeetingMinutesRun, probeId: string) {
+  const authorization = run.recoveryAuthorization;
+  const destination = meetingMinutesRuntimeConfig(env).destinations.find((item) => item.id === run.destination?.id);
+  if (!authorization || !isMeetingMinutesAdminRecoveryEligible(run) || !destination
+    || jcsCanonicalize(destination) !== jcsCanonicalize(run.destination)
+    || run.workspaceId !== authorization.workspaceId || run.sourceAppId !== authorization.appId
+    || run.sourceChannelId !== authorization.channelId || run.sourceThreadTs !== authorization.threadTs
+    || !authorization.requesterId || authorization.projectIds.length === 0) {
+    deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+  }
+  const identity = { provider: "slack" as const, app_id: authorization.appId,
+    workspace_id: authorization.workspaceId, channel_id: authorization.channelId,
+    thread_ts: authorization.threadTs, requester_id: authorization.requesterId,
+    event_id: `meeting_minutes_generation_probe:${run.runId}:${probeId}` };
+  const clients = tenantRuntimeClients(env, undefined, tenantConfiguredDesiredEffectByCapability(env));
+  const context = (await resolveSlackWorkerIngress({ identity,
+    required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES).split(",").map((v) => v.trim()).filter(Boolean),
+    required_authorization: { audience: authorization.audience,
+      project_id: authorization.projectIds[0]!, capability_id: authorization.capabilityId },
+    trusted_project_ids: authorization.projectIds, tenant_revision: authorization.tenantRevision,
+    authority: clients.authority, now: new Date().toISOString(),
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  })).tenant_context;
+  if (!hasStableMeetingMinutesRecoveryAuthority(context, authorization)
+    || context.slack.event_id !== identity.event_id || context.placement.profile !== tenantDeploymentProfile(env)) {
+    deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+  }
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+  const projectScope = destinationAuthorization
+    ? resolveMeetingMinutesDestinationProjectScope(context.authorization, destination,
+      destinationAuthorization.required_authorization.project_id, "worker_ingress")
+    : resolveCanonicalProjectScope(context.authorization,
+      placementAuthorizationForIdentity(env, identity).trusted_project_ids, "worker_ingress");
+  const expectedScope: ExpectedTenantScope = {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    workspace_id: authorization.workspaceId, app_id: authorization.appId,
+    channel_id: authorization.channelId, thread_ts: authorization.threadTs,
+    actor_principal_id: context.actor.principal_id, ...projectScope,
+    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    deployment_id: context.placement.deployment_id,
+  };
+  return { context, expectedScope };
 }
 
 async function reissueLongRunningTenantContext(
@@ -3189,6 +3235,92 @@ export default {
         setPaused: (paused) => gate.setIntakePaused(paused),
         status: () => gate.status(),
       });
+    }
+    const generationProbeMatch = url.pathname.match(
+      /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-generation-probe$/,
+    );
+    if (request.method === "POST" && generationProbeMatch) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      let payload: Record<string, unknown> | null;
+      try {
+        const parsed = await readAdminJsonRequest(request);
+        payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed as Record<string, unknown> : null;
+      } catch (error) {
+        const rejected = adminJsonInputErrorResponse(error);
+        if (rejected) return rejected;
+        throw error;
+      }
+      const runId = generationProbeMatch[1]!;
+      if (!payload || Object.keys(payload).some((key) => !["runId", "tenantId", "workspaceId", "probeId"].includes(key))
+        || payload.runId !== runId || typeof payload.tenantId !== "string" || !/^[A-Za-z0-9_-]{3,128}$/.test(payload.tenantId)
+        || typeof payload.workspaceId !== "string" || !/^[A-Z0-9]{3,32}$/.test(payload.workspaceId)
+        || typeof payload.probeId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(payload.probeId)) {
+        return Response.json({ ok: false, stage: "authorization", code: "meeting_minutes_probe_scope_invalid" }, { status: 400 });
+      }
+      const { tenantId, workspaceId, probeId } = payload;
+      const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(tenantId, workspaceId, runId));
+      const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+      const run = await withDisposableResource(() => getWorkspace(handle),
+        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      if (!run) return Response.json({ ok: false, stage: "authorization", code: "meeting_minutes_run_not_found" }, { status: 404 });
+      if (run.runId !== runId || run.recoveryAuthorization?.tenantId !== tenantId
+        || run.recoveryAuthorization?.workspaceId !== workspaceId) {
+        return Response.json({ ok: false, stage: "authorization", code: "meeting_minutes_probe_not_authorized" }, { status: 409 });
+      }
+      let stage = "authorization";
+      let observedProbe: Awaited<ReturnType<typeof runMeetingMinutesGenerationProbe>> | undefined;
+      const probeRunId = `generation-probe:${probeId}`;
+      let gateActive = false;
+      const gate = meetingMinutesDeploymentGate(env, tenantId);
+      try {
+        const { context, expectedScope } = await meetingMinutesGenerationProbeContext(env, run, probeId);
+        const clients = tenantRuntimeClients(env, context, tenantConfiguredDesiredEffectByCapability(env));
+        const verifier = new TenantRuntimeBoundaryVerifier({
+          read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        });
+        const now = () => new Date().toISOString();
+        const effects = createMeetingMinutesTenantEffectGuard({ env, tenant_context: context,
+          expected_scope: expectedScope, verifier, now });
+        if (await gate.isIntakePaused()) {
+          return Response.json({ ok: false, stage: "authorization", code: "meeting_minutes_intake_paused" }, { status: 409 });
+        }
+        await gate.markActive({ runId: probeRunId, startedAt: now(),
+          deadlineAt: new Date(Date.now() + 900_000).toISOString() });
+        gateActive = true;
+        stage = "execution";
+        const result = await executeTenantRuntimeOperation({ tenant_context: context, expected_scope: expectedScope,
+          verifier, quota: clients.quota, accounting: clients.accounting,
+          ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, context),
+          usage_unit: "model_tokens", now,
+          process: async () => {
+            const probe = await executeTenantContainerOperationWithRegistry({ namespace: env.TENANT_RUNTIME_STATE,
+              tenant_context: context, expected_scope: expectedScope, verifier, now: now(),
+              refresh: { issue: () => reissueLongRunningTenantContext(env, context, expectedScope), now },
+              execute: (tenantBoundaryHandle) => {
+                const resume = meetingMinutesClients(env, effects, context, tenantBoundaryHandle).resume;
+                return runMeetingMinutesGenerationProbe(run, { contextMode: resume.contextMode,
+                  download: resume.download, resolveContext: resume.resolveContext, generate: resume.generate });
+              },
+            });
+            observedProbe = probe;
+            stage = "accounting";
+            // This record contains only the probe's fixed, sanitized result contract.
+            console.log(JSON.stringify({ event: "meeting_minutes_generation_probe_result", probeId, ...probe }));
+            return { ...probe, outcome: probe.ok ? "succeeded" : "failed",
+              ...(probe.ok ? {} : { failureCode: probe.code ?? "meeting_minutes_generation_probe_failed" }) };
+          },
+        });
+        return Response.json({ probeId, ...result });
+      } catch (error) {
+        return Response.json({ ...observedProbe, probeId, ok: false, generationOk: observedProbe?.ok ?? null, stage,
+          code: error instanceof TenantBoundaryError ? error.code : "meeting_minutes_probe_execution_failed" }, { status: 502 });
+      } finally {
+        if (gateActive) await gate.markTerminal(probeRunId);
+      }
     }
     const authorizedRetryMatch = url.pathname.match(
       /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-retry$/,
