@@ -14,7 +14,12 @@ export function collectMeetingMinutesProjectBindings(config) {
     return parsed;
   };
   const destinations = [...parseArray("MEETING_MINUTES_DESTINATIONS_JSON"), ...parseArray("MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON")];
-  const targets = parseArray("TASK_BOARD_TARGETS_JSON");
+  const rawTargets = vars.TASK_BOARD_TARGETS_JSON;
+  if (typeof rawTargets !== "string") throw new Error("meeting_minutes_brainbase_project_check_config_missing:TASK_BOARD_TARGETS_JSON");
+  let parsedTargets;
+  try { parsedTargets = JSON.parse(rawTargets); } catch { throw new Error("meeting_minutes_brainbase_project_check_config_invalid:TASK_BOARD_TARGETS_JSON"); }
+  const targets = Array.isArray(parsedTargets) ? parsedTargets : parsedTargets?.targets;
+  if (!Array.isArray(targets)) throw new Error("meeting_minutes_brainbase_project_check_config_invalid:TASK_BOARD_TARGETS_JSON");
   const targetsById = new Map(targets.map((target) => [clean(target?.targetId), target]));
   const requiredCodes = new Set();
   const contextCodes = new Set();
