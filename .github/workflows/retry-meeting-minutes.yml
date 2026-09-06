@@ -94,7 +94,44 @@ jobs:
           jq -e --arg runId "$RUN_ID" --arg status "$status" \
             '$status == "200" and .runId == $runId' "$response_file" >/dev/null
           if [[ "$OPERATION" == "status" ]]; then
-            jq '{runId,status,updatedAt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+            jq '
+              def number_or_null: if type == "number" then . else null end;
+              def bool_or_null: if type == "boolean" then . else null end;
+              def one_of($values): . as $value | if $values | index($value) then $value else null end;
+              def timestamp: if type == "string" and test("^[0-9TZ:.-]{20,30}$") then . else null end;
+              {
+                status: (.status | one_of(["awaiting_destination","routed","generated","github_saved","posting","completed","failed"])),
+                updatedAt: (.updatedAt | timestamp),
+                checkpoint: {
+                  hasGitHub: (.checkpoint.hasGitHub | bool_or_null),
+                  hasSlackParent: (.checkpoint.hasSlackParent | bool_or_null),
+                  postedChunkCount: (.checkpoint.postedChunkCount | number_or_null),
+                  hasTaskCard: (.checkpoint.hasTaskCard | bool_or_null)
+                },
+                taskRegistration: {
+                  registeredCount: (.taskRegistration.registeredCount | number_or_null),
+                  pendingPresent: (.taskRegistration.pendingPresent | bool_or_null),
+                  hasFailure: (if .taskRegistration | type == "object" then .taskRegistration.failure != null else null end)
+                },
+                generation: {
+                  startedAt: (.diagnostics.generation.startedAt | timestamp),
+                  finishedAt: (.diagnostics.generation.finishedAt | timestamp),
+                  elapsedMs: (.diagnostics.generation.elapsedMs | number_or_null),
+                  timeoutMs: (.diagnostics.generation.timeoutMs | number_or_null),
+                  exitCode: (.diagnostics.generation.exitCode | number_or_null),
+                  outcome: (.diagnostics.generation.outcome | one_of(["success","timeout","nonzero_exit","transport_failure"])),
+                  stderrCode: (.diagnostics.generation.stderrCode | one_of(["TIMEOUT","RATE_LIMITED","AUTHENTICATION_FAILED","HOOK_FAILED","CLI_ERROR","UNKNOWN"])),
+                  stdoutBytes: (.diagnostics.generation.stdoutBytes | number_or_null),
+                  streamEventCount: (.diagnostics.generation.streamEventCount | number_or_null),
+                  progress: (.diagnostics.generation.progress | {
+                    prompt_written: (.prompt_written | bool_or_null),
+                    exec_started: (.exec_started | bool_or_null),
+                    stdout_observed: (.stdout_observed | bool_or_null),
+                    hook_observed: (.hook_observed | bool_or_null),
+                    result_observed: (.result_observed | bool_or_null)
+                  })
+                }
+              }' "$response_file"
             echo "状態確認のみ。再投入・外部送信なし。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
