@@ -104,4 +104,11 @@ describe("meeting-minutes run receipt", () => {
       stage: "run_receipt", code: "RUN_RECEIPT_READBACK_TRANSPORT_FAILED", retryable: true,
     });
   });
+
+  it("classifies the tenant authority boundary separately from receipt transport", () => {
+    expect(classifyMeetingMinutesRunReceiptFailure(new Error("meeting_minutes_run_receipt_authority_unavailable")))
+      .toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_AUTHORITY_UNAVAILABLE", retryable: true });
+    expect(classifyMeetingMinutesRunReceiptFailure(new Error("meeting_minutes_run_receipt_authority_rejected")))
+      .toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_AUTHORITY_REJECTED", retryable: false });
+  });
 });

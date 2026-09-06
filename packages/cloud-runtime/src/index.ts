@@ -1407,7 +1407,14 @@ function meetingMinutesClients(
               ? new URL("/api/run-receipts/ingest", env.BRAINBASE_TASK_API_BASE_URL).toString()
               : ""),
           env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN,
-        ).emit(receipt)),
+        ).emit(receipt)).catch((error: unknown) => {
+          if (!(error instanceof TenantBoundaryError)) throw error;
+          if (error.code === "AUTHORITY_UNAVAILABLE" || error.code === "WORKSPACE_CONNECTION_UNAVAILABLE"
+            || error.code === "UPSTREAM_UNAVAILABLE") {
+            throw new Error("meeting_minutes_run_receipt_authority_unavailable");
+          }
+          throw new Error("meeting_minutes_run_receipt_authority_rejected");
+        }),
       // Destination project IDs belong to the task destination contract and are
       // not Graph person scopes. Resolve globally, then let non-unique names
       // fail closed in resolveGraphPersonByName.
