@@ -132,6 +132,7 @@ import {
   executeCompanyAuthorityReplyOperation,
   handleExternalEffectReconciliationQueueMessage,
 } from "../index.js";
+import { verifyTaskWriteCapability } from "@openryoko/write-broker";
 
 type CompanyAuthorityReplyOperation = Parameters<typeof executeCompanyAuthorityReplyOperation>[1];
 type RuntimeEnv = Parameters<typeof executeCompanyAuthorityReplyOperation>[0];
@@ -144,7 +145,7 @@ const appId = "A_UNSON";
 const channelId = "C_ROUTER";
 const userId = "U123";
 const personId = "person-accepted";
-const projectId = "project-1";
+const projectId = "prj_01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const threadTs = "1786420000.000001";
 const responseTs = "1786420000.000451";
 
@@ -588,6 +589,27 @@ describe("Company Authority runtime.execute reply executor", () => {
     expect(runtimeMocks.readbackInputs[0]?.observed).toEqual({ channel: channelId, ts: responseTs });
     expect(runtimeMocks.readbackInputs[0]?.bodyHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
     expect(runtimeMocks.workspaceStub.completeRuntimeEvent).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the Task API project code in the write capability when authority uses a canonical ID", async () => {
+    const env = runtimeEnv();
+    const placements = JSON.parse(env.RUNTIME_PLACEMENTS_JSON!);
+    placements[0].projectCodes = ["mana"];
+    env.RUNTIME_PLACEMENTS_JSON = JSON.stringify(placements);
+    env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON = JSON.stringify({ tasks: [projectId] });
+
+    await executeCompanyAuthorityReplyOperation(env, operation());
+
+    const token = runtimeMocks.preparedRequesters[0]?.taskWriteCapability as string;
+    const claims = await verifyTaskWriteCapability(token, env.TASK_WRITE_CAPABILITY_SECRET!, {
+      requestId: "EvCompanyAuthorityReply",
+      workspace: workspaceId,
+      placementId: "tasks",
+    });
+    expect(claims.projects).toEqual(["mana"]);
+    expect(runtimeMocks.replyInputs[0]?.options).toMatchObject({
+      brainbaseProjectCode: projectId,
+    });
   });
 
   it("keeps an unknown readback unresolved and does not resend an existing claim", async () => {
