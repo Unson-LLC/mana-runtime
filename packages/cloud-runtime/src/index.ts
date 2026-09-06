@@ -4211,7 +4211,8 @@ export default {
         repairPlacements: [{ channelId: requiredRuntimeBinding(env.MEETING_MINUTES_ROUTER_CHANNEL_ID),
           allowedUserIds: [...meetingMinutesRuntimeConfig(env).operatorUserIds] }],
         repairMeetingMinutes: async (input) => {
-          const clients = tenantRuntimeClients(env);
+          const clients = tenantRuntimeClients(env, undefined,
+            tenantConfiguredDesiredEffectByCapability(env));
           const receivedAt = new Date().toISOString();
           const appId = requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID);
           const identity: TenantInteractionIdentity = {
