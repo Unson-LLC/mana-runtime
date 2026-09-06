@@ -30,7 +30,7 @@ export async function processTaskWriteRpcMessage(message, fetchImpl = fetch) {
     } : {}),
   }, body: JSON.stringify({ ...args, request_id: requestId, operation }), redirect: "manual", signal: AbortSignal.timeout(20_000) }).catch(() => null);
   const payload = response ? await response.json().catch(() => ({ error: "task_write_invalid_response" })) : { error: "task_write_unavailable" };
-  return { jsonrpc: "2.0", id: message.id ?? null, result: { content: [{ type: "text", text: JSON.stringify(payload) }], isError: !response?.ok } };
+  return { jsonrpc: "2.0", id: message.id ?? null, result: { content: [{ type: "text", text: JSON.stringify(payload) }], isError: !response?.ok || payload?.status === "approval_required" } };
 }
 async function run() { const lines = createInterface({ input: process.stdin, crlfDelay: Infinity }); for await (const line of lines) { let msg; try { msg = JSON.parse(line); } catch { process.stdout.write(`${JSON.stringify(error(null,-32700,"Parse error"))}\n`); continue; } const response = await processTaskWriteRpcMessage(msg); if (response) process.stdout.write(`${JSON.stringify(response)}\n`); } }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) run().catch(() => { process.exitCode = 1; });

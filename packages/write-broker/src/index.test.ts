@@ -80,6 +80,28 @@ describe("task write policy", () => {
     });
   });
 
+  it("prefers a more specific auto rule over a wildcard approval rule", () => {
+    const overlappingPolicy: TaskWritePolicy = {
+      version: "2026-09-06",
+      rules: [
+        { effect: "auto", actors: ["U1"], placements: ["C1"], projects: ["back-office"], operations: ["task.create"] },
+        { effect: "approval", actors: ["*"], placements: ["C1"], projects: ["back-office"], operations: ["task.create"], approvers: ["U_APPROVER"], ttlSeconds: 120 },
+      ],
+    };
+    expect(evaluateTaskWritePolicy(overlappingPolicy, intent)).toEqual({
+      effect: "auto", policyVersion: "2026-09-06",
+    });
+    expect(evaluateTaskWritePolicy(overlappingPolicy, { ...intent, actor: { ...intent.actor, id: "U_OTHER" } })).toEqual({
+      effect: "approval", policyVersion: "2026-09-06", approvers: ["U_APPROVER"], ttlSeconds: 120,
+    });
+    expect(evaluateTaskWritePolicy({
+      ...overlappingPolicy,
+      rules: [...overlappingPolicy.rules, {
+        effect: "deny", actors: ["*"], placements: ["C1"], projects: ["back-office"], operations: ["task.create"],
+      }],
+    }, intent)).toEqual({ effect: "deny", policyVersion: "2026-09-06", reason: "rule_denied" });
+  });
+
   it("rejects invalid or overlong approval configuration", () => {
     expect(() => evaluateTaskWritePolicy({ version: "x", rules: [{ ...policy.rules[1]!, ttlSeconds: 0 }] }, intent)).toThrow("invalid_write_policy");
     expect(() => evaluateTaskWritePolicy({ version: "x", rules: [{ ...policy.rules[1]!, ttlSeconds: 301 }] }, intent)).toThrow("invalid_write_policy");
