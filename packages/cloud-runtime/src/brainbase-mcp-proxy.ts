@@ -43,6 +43,15 @@ function filterToolCatalogPayload(payload: unknown, allowedTools: readonly strin
   };
 }
 
+function allowedMcpResponseHeaders(response: Response): Headers {
+  const headers = new Headers({
+    "content-type": response.headers.get("content-type") ?? "application/json",
+  });
+  const sessionId = response.headers.get("mcp-session-id");
+  if (sessionId) headers.set("mcp-session-id", sessionId);
+  return headers;
+}
+
 async function filterToolCatalogResponse(response: Response, allowedTools: readonly string[]): Promise<Response> {
   const contentType = response.headers.get("content-type") ?? "application/json";
   const text = await response.text();
@@ -56,11 +65,11 @@ async function filterToolCatalogResponse(response: Response, allowedTools: reado
         return `data: ${JSON.stringify(payload)}`;
       }).join("\n");
       if (!filtered) throw new Error("invalid_catalog");
-      return new Response(output, { status: response.status, headers: response.headers });
+      return new Response(output, { status: response.status, headers: allowedMcpResponseHeaders(response) });
     }
     return Response.json(filterToolCatalogPayload(JSON.parse(text), allowedTools), {
       status: response.status,
-      headers: response.headers,
+      headers: allowedMcpResponseHeaders(response),
     });
   } catch {
     return Response.json({ error: { code: "BRAINBASE_MCP_TOOL_CATALOG_INVALID", retryable: true } }, { status: 502 });
@@ -150,12 +159,7 @@ export async function handleBrainbaseMcpProxyRequest(
         errorCode: diagnostic.match(/\b(?:judgment|brainbase)_[a-z0-9_]{1,80}\b/u)?.[0] ?? null,
       }));
     }
-    const responseHeaders = new Headers({
-      "content-type": response.headers.get("content-type") ?? "application/json",
-    });
-    const sessionId = response.headers.get("mcp-session-id");
-    if (sessionId) responseHeaders.set("mcp-session-id", sessionId);
-    return new Response(response.body, { status: response.status, headers: responseHeaders });
+    return new Response(response.body, { status: response.status, headers: allowedMcpResponseHeaders(response) });
   } catch {
     return Response.json({ error: { code: "BRAINBASE_UPSTREAM_UNAVAILABLE", retryable: true } }, { status: 502 });
   }

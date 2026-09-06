@@ -100,12 +100,17 @@ describe("Brainbase judgment Hook proxy", () => {
     expect(response.headers.get("mcp-session-id")).toBe("session-456");
   });
 
-  it("exposes only company-authorized tools in a JSON catalog", async () => {
+  it("exposes only company-authorized tools in a JSON catalog and safe transport headers", async () => {
     const forward = vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [
       { name: "brainbase_resolve_turn", inputSchema: { type: "object" } },
       { name: "brainbase_knowledge_resolve", inputSchema: { type: "object" } },
       { name: "brainbase_admin_write", inputSchema: { type: "object" } },
-    ] } })) as unknown as typeof fetch;
+    ] } }, { headers: {
+      "content-type": "application/mcp+json",
+      "mcp-session-id": "catalog-session",
+      "set-cookie": "session=secret",
+      "x-upstream-debug": "must-not-forward",
+    } })) as unknown as typeof fetch;
     const response = await handleBrainbaseMcpProxyRequest(
       new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: JSON.stringify({
         jsonrpc: "2.0", id: 1, method: "tools/list", params: {},
@@ -117,6 +122,10 @@ describe("Brainbase judgment Hook proxy", () => {
     expect(body.result.tools.map((tool) => tool.name)).toEqual([
       "brainbase_resolve_turn", "brainbase_knowledge_resolve",
     ]);
+    expect(response.headers.get("content-type")).toBe("application/mcp+json");
+    expect(response.headers.get("mcp-session-id")).toBe("catalog-session");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("x-upstream-debug")).toBeNull();
   });
 
   it("filters an event-stream catalog and fails closed for malformed success payloads", async () => {
@@ -124,7 +133,12 @@ describe("Brainbase judgment Hook proxy", () => {
       { name: "brainbase_resolve_turn" }, { name: "brainbase_admin_write" },
     ] } };
     for (const [upstream, expectedStatus] of [
-      [new Response(`event: message\ndata: ${JSON.stringify(catalog)}\n\n`, { headers: { "content-type": "text/event-stream" } }), 200],
+      [new Response(`event: message\ndata: ${JSON.stringify(catalog)}\n\n`, { headers: {
+        "content-type": "text/event-stream",
+        "mcp-session-id": "event-stream-session",
+        "set-cookie": "session=secret",
+        "x-upstream-debug": "must-not-forward",
+      } }), 200],
       [Response.json({ jsonrpc: "2.0", id: 1, result: {} }), 502],
     ] as const) {
       const response = await handleBrainbaseMcpProxyRequest(
@@ -137,6 +151,10 @@ describe("Brainbase judgment Hook proxy", () => {
       expect(response.status).toBe(expectedStatus);
       if (expectedStatus === 200) {
         expect(await response.text()).toContain('"tools":[{"name":"brainbase_resolve_turn"}]');
+        expect(response.headers.get("content-type")).toBe("text/event-stream");
+        expect(response.headers.get("mcp-session-id")).toBe("event-stream-session");
+        expect(response.headers.get("set-cookie")).toBeNull();
+        expect(response.headers.get("x-upstream-debug")).toBeNull();
       } else {
         expect(await response.json()).toEqual({ error: { code: "BRAINBASE_MCP_TOOL_CATALOG_INVALID", retryable: true } });
       }
