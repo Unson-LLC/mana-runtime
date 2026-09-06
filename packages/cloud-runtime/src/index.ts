@@ -3612,9 +3612,19 @@ export default {
               if (!run) deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
               const target = taskBoardTargets(env).find((candidate) => candidate.targetId === targetId);
               if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
+              const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding({
+                organizationId: run.destination!.organization.id,
+                destination: run.destination!,
+                destinationTeamIdsJson: env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON,
+                trustedWorkspaceConnections: parseWorkspaceConnectionHints(env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON),
+                sourceTenantId: effects.tenant_id,
+                sourceWorkspaceId: effects.source.workspace_id,
+                sourceAppId: effects.source.app_id,
+              });
               return effects.durableObject(
                 `task-board-repair:${targetId}:${run.runId}:${run.updatedAt}`,
-                { workspace_id: target.workspaceId, channel_id: target.channelId,
+                { app_id: destinationSlackBinding.app_id,
+                  workspace_id: target.workspaceId, channel_id: target.channelId,
                   thread_ts: run.slack?.parentTs ?? source.threadTs },
                 (taskBoardTenantContext) => enqueueMeetingMinutesTaskBoardRepair(
                   env,
