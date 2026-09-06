@@ -2669,9 +2669,10 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       if (requesterResolution.status !== "resolved") {
         throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
       }
-      const { taskWriteEnabled, taskWriteCapability } = canonicalPersonId !== undefined
-        ? { taskWriteEnabled: false, taskWriteCapability: undefined }
-        : await issueTaskWriteRequestContext(
+      // Company Authority has already fixed both the canonical actor and the
+      // exact project scope. Reuse the ordinary signed task-write capability so
+      // the sandbox can mutate only that accepted placement and project.
+      const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
         event,
         env,
         Date.now(),
