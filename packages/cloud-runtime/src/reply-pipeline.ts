@@ -71,6 +71,19 @@ interface ExecResult {
 
 export interface ReplySandbox {
   setSleepAfter?(sleepAfter: string | number): Promise<void>;
+  startProcess?(
+    command: string,
+    options: {
+      processId: string;
+      autoCleanup: boolean;
+      timeout: number;
+      env?: Record<string, string | undefined>;
+    },
+  ): Promise<{
+    getStatus(): Promise<"starting" | "running" | "completed" | "failed" | "killed" | "error">;
+    getLogs(): Promise<{ stdout: string; stderr: string }>;
+    kill(signal?: string): Promise<void>;
+  }>;
   writeFile(path: string, content: string): Promise<unknown>;
   exec(
     command: string,
@@ -474,23 +487,50 @@ export async function generateClaudeReply(
       } : {}),
     };
     const claudeSessionId = crypto.randomUUID();
-    const runClaude = (resumeSession: boolean) => sandbox.exec(
-      buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
+    const runClaude = async (resumeSession: boolean) => {
+      const command = buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
         mcpEnabled: true,
         includeJudgmentHookEvents: true,
         sessionId: claudeSessionId,
         ...(resumeSession ? { resumeSession: true } : {}),
-      }),
-      {
-        timeout: remainingReplySandboxTimeoutMs(
-          options.tenantBoundaryExpiresAt,
-          options.nowMs?.() ?? Date.now(),
-        ),
+      });
+      const timeout = remainingReplySandboxTimeoutMs(
+        options.tenantBoundaryExpiresAt,
+        options.nowMs?.() ?? Date.now(),
+      );
+      if (!sandbox.startProcess) return sandbox.exec(command, { timeout, env: execEnv });
+
+      // A foreground Sandbox exec is one long HTTP request. Cloudflare can
+      // close that request while Claude is still completing blocking hooks.
+      // Run it as a managed process and use short status requests instead.
+      const process = await sandbox.startProcess(command, {
+        processId: `reply-${claudeSessionId}`,
+        autoCleanup: false,
+        timeout,
         env: execEnv,
-      },
-    );
+      });
+      const deadline = Date.now() + timeout;
+      let status = await process.getStatus();
+      while (status === "starting" || status === "running") {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          await process.kill().catch(() => undefined);
+          throw new Error("sandbox_process_timeout");
+        }
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, remainingMs)));
+        status = await process.getStatus();
+      }
+      const logs = await process.getLogs();
+      return {
+        success: status === "completed",
+        stdout: logs.stdout,
+        stderr: logs.stderr,
+        exitCode: status === "completed" ? 0 : 1,
+        outcome: status,
+      };
+    };
     let resumedSession = false;
     let result;
     try {
