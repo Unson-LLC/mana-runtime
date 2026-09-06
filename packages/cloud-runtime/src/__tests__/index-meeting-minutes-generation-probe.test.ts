@@ -396,6 +396,24 @@ describe("authorized meeting-minutes generation probe route", () => {
     expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
   });
 
+  it("does not correct an OutcomeCase before the saved recovery scope is authorized", async () => {
+    const receiptRun = await retryableReceiptRun({
+      outcomeCaseId: "wrong_case",
+      recoveryAuthorization: { ...recoveryAuthorization, workspaceId: "TOTHER" },
+    });
+    runtimeMocks.loadRun.mockResolvedValue(receiptRun);
+
+    const response = await fetchWorker(authorizedReceiptRetryRequest({ tenantId: TENANT_ID,
+      workspaceId: WORKSPACE_ID, actionTs: "100.200", outcomeCaseId: "correct_case" },
+    { authorization: `Bearer ${ADMIN_TOKEN}` }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "meeting_minutes_admin_retry_not_authorized" });
+    expect(receiptRun.outcomeCaseId).toBe("wrong_case");
+    expect(runtimeMocks.saveRun).not.toHaveBeenCalled();
+    expect(runtimeMocks.executeTenantRuntimeOperation).not.toHaveBeenCalled();
+  });
+
   it("retries from the persisted run when destination metadata changed after completion", async () => {
     const receiptRun = await retryableReceiptRun();
     runtimeMocks.loadRun.mockResolvedValue(receiptRun);

@@ -3580,6 +3580,11 @@ export default {
       const run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
         const saved = await loadMeetingMinutesRun(workspace.fs, runId);
         if (!saved || outcomeCaseId === undefined || saved.outcomeCaseId === outcomeCaseId) return saved;
+        const savedAuthorization = saved.recoveryAuthorization;
+        if (!savedAuthorization || savedAuthorization.tenantId !== tenantId
+          || savedAuthorization.workspaceId !== workspaceId || !saved.destination || !saved.sourceAppId) {
+          return saved;
+        }
         if (saved.runReceipt?.status === "delivered") return saved;
         saved.outcomeCaseId = outcomeCaseId;
         // A changed OutcomeCase changes the immutable receipt payload. Advance
