@@ -846,6 +846,14 @@ describe("会社別Cloudflare deployment", () => {
     expect(retryWorkflow).toContain('.runReceipt.status == "delivered"');
     expect(retryWorkflow).toContain(".runReceipt.caseId == $expectedOutcomeCaseId");
     expect(retryWorkflow).toContain("if ! jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true");
+    expect(retryWorkflow).toContain("Fresh retry remained pending until the polling deadline");
+    const pendingDeadline = retryWorkflow.indexOf("Fresh retry remained pending until the polling deadline");
+    expect(pendingDeadline).toBeGreaterThan(-1);
+    expect(retryWorkflow.lastIndexOf('if [[ "$attempt" == "90" ]]', pendingDeadline)).toBeLessThan(
+      retryWorkflow.indexOf("sleep 10\n                continue", pendingDeadline),
+    );
+    expect(retryWorkflow).toContain("failurePoint: (.failurePoint");
+    expect(retryWorkflow).toContain("scopeReason: (if .scopeReason");
     expect(worker).toContain('runAdminMatch[2] === "/adopt-tasks"');
     expect(worker).toContain("meeting_minutes_task_adoption_scope_mismatch");
     expect(worker).toContain("const incompleteAdoption =");
