@@ -38,6 +38,50 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(result).toEqual({ code: 0, stdout: "", stderr: "" });
   });
 
+  it.each(["PostToolUse", "PostToolUseFailure"])(
+    "does not forward unrelated %s events to the Brainbase Host journal",
+    async (hook_event_name) => {
+      let requestCount = 0;
+      const server = createServer(async (request, response) => {
+        requestCount += 1;
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(chunk as Buffer);
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          schema_version: "1", accepted: true,
+          hook_event_name: payload.hook_event_name, session_id: payload.session_id,
+          turn_id: payload.turn_id, receipt_id: "receipt-unrelated-tool",
+          route_resolution_sha256: "b".repeat(64),
+          output: { hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit", additionalContext: "Judgment route resolved",
+          } },
+        }));
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test_server_missing");
+      const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+      cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+      const env = {
+        BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+        BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+      };
+
+      expect((await runHook({
+        hook_event_name: "UserPromptSubmit", session_id: `session-${hook_event_name}`,
+      }, env)).code).toBe(0);
+      const result = await runHook({
+        hook_event_name, session_id: `session-${hook_event_name}`,
+        tool_use_id: "task-write-1", tool_name: "mcp__task-write__task_write",
+      }, env);
+
+      expect(result).toEqual({ code: 0, stdout: "", stderr: "" });
+      expect(requestCount).toBe(1);
+    },
+  );
+
   it("routes a Slack reply from the trusted user request instead of model scaffolding", async () => {
     let forwarded: Record<string, unknown> | undefined;
     const server = createServer(async (request, response) => {
