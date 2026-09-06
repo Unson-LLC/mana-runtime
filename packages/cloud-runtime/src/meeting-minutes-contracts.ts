@@ -1,3 +1,4 @@
+import type { MeetingMinutesExecutionTrace } from "./meeting-minutes-execution-trace.js";
 import type { SlackFileReference } from "./types.js";
 import type { DeploymentProfileName } from "./multitenancy/contracts.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
@@ -101,6 +102,9 @@ export type MeetingMinutesGenerationStdoutErrorCode =
 export type MeetingMinutesGenerationStdoutStatusCode = 400 | 401 | 403 | 429 | 500 | 502 | 503 | 504;
 
 export interface MeetingMinutesGenerationDiagnostics {
+  executionTrace?: MeetingMinutesExecutionTrace;
+  phaseTimings?: { prepareMs?: number; cleanupMs?: number };
+  inputChars?: { transcript: number; context: number; prompt: number };
   schemaVersion: "meeting_minutes_generation_diagnostics.v1";
   startedAt: string;
   finishedAt?: string;

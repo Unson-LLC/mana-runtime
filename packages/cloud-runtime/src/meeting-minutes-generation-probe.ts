@@ -1,3 +1,4 @@
+import { sanitizeMeetingMinutesExecutionTrace, type MeetingMinutesExecutionTrace } from "./meeting-minutes-execution-trace.js";
 import {
   assertMeetingMinutesContextUsable,
   bindGeneratedMeetingMinutesContext,
@@ -43,6 +44,9 @@ export interface MeetingMinutesGenerationProbeResult {
 }
 
 export interface SafeMeetingMinutesGenerationDiagnostics {
+  executionTrace: MeetingMinutesExecutionTrace | null;
+  phaseTimings: { prepareMs: number | null; cleanupMs: number | null } | null;
+  inputChars: { transcript: number | null; context: number | null; prompt: number | null } | null;
   outcome: MeetingMinutesGenerationDiagnostics["outcome"] | null;
   model: string | null;
   timeoutMs: number | null;
@@ -123,6 +127,11 @@ export function sanitizeMeetingMinutesGenerationDiagnostics(value: unknown): Saf
     ? input.progress : undefined;
   const bool = (item: unknown): boolean | null => typeof item === "boolean" ? item : null;
   return {
+    executionTrace: sanitizeMeetingMinutesExecutionTrace(input.executionTrace),
+    phaseTimings: input.phaseTimings ? { prepareMs: safeNumber(input.phaseTimings.prepareMs),
+      cleanupMs: safeNumber(input.phaseTimings.cleanupMs) } : null,
+    inputChars: input.inputChars ? { transcript: safeNumber(input.inputChars.transcript),
+      context: safeNumber(input.inputChars.context), prompt: safeNumber(input.inputChars.prompt) } : null,
     outcome: GENERATION_OUTCOMES.has(input.outcome) ? input.outcome! : null,
     model: safeModel(input.model), timeoutMs: safeNumber(input.timeoutMs), elapsedMs: safeNumber(input.elapsedMs),
     exitCode: typeof input.exitCode === "number" && Number.isSafeInteger(input.exitCode) ? input.exitCode : null,

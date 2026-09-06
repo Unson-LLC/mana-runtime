@@ -10,6 +10,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 describe("Cloudflare Claude runtime config", () => {
+  it("uses the diagnostic runner only for an explicitly traced meeting generation", () => {
+    expect(buildRuntimeClaudeCommand("meeting-minutes", { model: "sonnet" }, { traceMeetingMinutes: true }))
+      .toContain("node /tmp/meeting-minutes-trace-runner.mjs --");
+    expect(buildRuntimeClaudeCommand("reply", { model: "sonnet" }, { traceMeetingMinutes: true }))
+      .toContain("node /opt/mana/tenant-claude-runner.mjs --");
+  });
   it("resolves the exact deployment policy", () => {
     const config = resolveClaudeRuntimeConfig({
       RUNTIME_CLAUDE_MODEL: "opus",
