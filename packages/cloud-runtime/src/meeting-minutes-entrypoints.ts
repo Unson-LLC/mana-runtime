@@ -1,4 +1,5 @@
-import type { MeetingMinutesDestination, MeetingMinutesRedo, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { OUTCOME_CASE_ID_PATTERN, type MeetingMinutesDestination, type MeetingMinutesRedo,
+  type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns, validateMeetingMinutesDestinations,
   type RedoMeetingMinutesOptions, type ResumeMeetingMinutesOptions, type StartMeetingMinutesOptions } from "./meeting-minutes-pipeline.js";
 import type { SlackQueueEvent } from "./types.js";
@@ -55,6 +56,10 @@ export function isMeetingMinutesSelection(value: unknown): value is MeetingMinut
   return candidate.kind === "meeting_minutes_selection" &&
     typeof candidate.runId === "string" && /^[A-Za-z0-9_-]{3,260}$/.test(candidate.runId) &&
     typeof candidate.destinationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate.destinationId) &&
+    (candidate.outcomeCaseId === undefined
+      ? candidate.outcomeCaseSource === undefined
+      : typeof candidate.outcomeCaseId === "string" && OUTCOME_CASE_ID_PATTERN.test(candidate.outcomeCaseId) &&
+        candidate.outcomeCaseSource === "admin_authorized_retry") &&
     [candidate.workspaceId, candidate.appId, candidate.channelId, candidate.userId].every((item) =>
       typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
     typeof candidate.threadTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.threadTs) &&

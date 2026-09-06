@@ -11,6 +11,16 @@ export interface RunReceiptV1 {
 
 export interface ConfirmedRunReceiptDelivery { receiptId: string }
 
+interface RunReceiptIngestResponse {
+  status?: unknown;
+  run?: { id?: unknown };
+  /**
+   * Returned by Brainbase only after it has validated the declared case against
+   * the receipt project and durably recorded the case-to-receipt relation.
+   */
+  outcome_case_links?: Array<{ case_id?: unknown; status?: unknown }>;
+}
+
 function hex(bytes: ArrayBuffer): string {
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -44,8 +54,8 @@ export async function buildMeetingMinutesRunReceipt(run: MeetingMinutesRun): Pro
         { kind: "url", ref: run.github.minutesUrl, label: "minutes" },
         { kind: "artifact_ref", ref: `slack:${readback.channel}:${readback.ts}:${readback.bodyHash.slice("sha256:".length)}`,
           label: "source_status_readback" },
-        ...(destination.outcomeCaseId
-          ? [{ kind: "artifact_ref" as const, ref: `outcome_case:${destination.outcomeCaseId}`,
+        ...(run.outcomeCaseId
+          ? [{ kind: "artifact_ref" as const, ref: `outcome_case:${run.outcomeCaseId}`,
             label: "declared_outcome_case" }]
           : []),
       ] },
@@ -65,10 +75,16 @@ export class MeetingMinutesRunReceiptClient {
     if (response.status !== 200 && response.status !== 201) {
       throw new Error(`meeting_minutes_run_receipt_request_failed:${response.status}`);
     }
-    const result = await response.json().catch(() => null) as { status?: unknown; run?: { id?: unknown } } | null;
+    const result = await response.json().catch(() => null) as RunReceiptIngestResponse | null;
     const receiptId = typeof result?.run?.id === "string" ? result.run.id : undefined;
     if ((result?.status !== "created" && result?.status !== "duplicate") || !receiptId) {
       throw new Error("meeting_minutes_run_receipt_ingest_response_invalid");
+    }
+    const declaredCaseId = receipt.run.evidence_refs.find((reference) => reference.kind === "artifact_ref"
+      && reference.ref.startsWith("outcome_case:"))?.ref.slice("outcome_case:".length);
+    if (declaredCaseId && !result?.outcome_case_links?.some((link) => link.case_id === declaredCaseId
+      && (link.status === "linked" || link.status === "duplicate"))) {
+      throw new Error("meeting_minutes_run_receipt_outcome_case_link_unconfirmed");
     }
     const readbackUrl = new URL(this.ingestUrl);
     if (!readbackUrl.pathname.endsWith("/ingest")) {

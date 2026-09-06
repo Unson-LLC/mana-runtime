@@ -65,6 +65,43 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("meeting minutes pipeline", () => {
+  it("persists an OutcomeCase only from the initial per-run selection", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const selected = { ...selection, outcomeCaseId: "case_01", outcomeCaseSource: "admin_authorized_retry" as const };
+    const run = await resumeMeetingMinutesRun(fs, selected, resumeOptions());
+    expect(run.outcomeCaseId).toBe("case_01");
+    await expect(resumeMeetingMinutesRun(fs, { ...selection, outcomeCaseId: "case_02",
+      outcomeCaseSource: "admin_authorized_retry" }, resumeOptions()))
+      .rejects.toThrow("meeting_minutes_outcome_case_changed");
+  });
+
+  it("rejects a case selection without the admin recovery provenance", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await expect(resumeMeetingMinutesRun(fs, { ...selection, outcomeCaseId: "case_01" }, resumeOptions()))
+      .rejects.toThrow("meeting_minutes_outcome_case_invalid");
+  });
+
+  it("permits one authenticated recovery attachment before receipt delivery but never after it", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const completed = await resumeMeetingMinutesRun(fs, selection, resumeOptions());
+    expect(completed.outcomeCaseId).toBeUndefined();
+    const attached = await resumeMeetingMinutesRun(fs, { ...selection, outcomeCaseId: "case_01",
+      outcomeCaseSource: "admin_authorized_retry" }, resumeOptions());
+    expect(attached.outcomeCaseId).toBe("case_01");
+    attached.runReceipt = { idempotencyKey: "rr1_existing", status: "delivered", deliveredAt: "2026-09-06T00:02:00.000Z" };
+    delete attached.outcomeCaseId;
+    await saveMeetingMinutesRun(fs, attached);
+    await expect(resumeMeetingMinutesRun(fs, { ...selection, outcomeCaseId: "case_02",
+      outcomeCaseSource: "admin_authorized_retry" }, resumeOptions()))
+      .rejects.toThrow("meeting_minutes_outcome_case_receipt_delivered");
+  });
+
   it("rejects ambiguous Slack credential routing across organizations", () => {
     expect(() => validateMeetingMinutesDestinations([
       destination,

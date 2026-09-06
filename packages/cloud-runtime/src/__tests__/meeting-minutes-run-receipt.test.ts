@@ -9,7 +9,8 @@ function completedRun(overrides: Partial<MeetingMinutesRun> = {}): MeetingMinute
     destination: { id: "brainbase", projectId: "brainbase", contextProjectCode: "brainbase",
       taskProjectCodes: ["brainbase"], taskBoardTargetId: "minutes-brainbase", name: "Brainbase",
       organization: { id: "unson", name: "雲孫" }, slackChannelId: "C2",
-      outcomeCaseId: "case_01", github: { owner: "Unson-LLC", repo: "brainbase" } },
+      github: { owner: "Unson-LLC", repo: "brainbase" } },
+    outcomeCaseId: "case_01",
     github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "https://github.test/t", minutesUrl: "https://github.test/m" },
     slack: { processingTs: "2.1", parentTs: "3.1", postedChunkIndexes: [0] },
     statusProjection: { outcome: "completed", projectedAt: "2026-09-06T00:01:00.000Z" },
@@ -50,7 +51,8 @@ describe("meeting-minutes run receipt", () => {
   it("marks delivery only after Brainbase reads back the persisted healthy receipt", async () => {
     const receipt = await buildMeetingMinutesRunReceipt(completedRun());
     const fetchImpl = vi.fn()
-      .mockResolvedValueOnce(Response.json({ status: "created", run: { id: "brainbase-run-1" } }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ status: "created", run: { id: "brainbase-run-1" },
+        outcome_case_links: [{ case_id: "case_01", status: "linked" }] }, { status: 201 }))
       .mockResolvedValueOnce(Response.json({ receipt: { run_id: "brainbase-run-1",
         external_run_id: receipt!.run.external_run_id, source_status: "success", evidence_state: "confirmed" },
       diagnosis: { state: "healthy" } }));
@@ -58,5 +60,14 @@ describe("meeting-minutes run receipt", () => {
       .emit(receipt!)).resolves.toEqual({ receiptId: "brainbase-run-1" });
     expect(fetchImpl).toHaveBeenNthCalledWith(2,
       expect.objectContaining({ pathname: "/api/run-receipts/brainbase-run-1/diagnosis" }), expect.any(Object));
+  });
+
+  it("keeps a declared OutcomeCase pending until Brainbase confirms its durable link", async () => {
+    const receipt = await buildMeetingMinutesRunReceipt(completedRun());
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ status: "created", run: { id: "brainbase-run-1" } },
+      { status: 201 }));
+    await expect(new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token", fetchImpl)
+      .emit(receipt!)).rejects.toThrow("meeting_minutes_run_receipt_outcome_case_link_unconfirmed");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

@@ -71,8 +71,17 @@ describe("meeting minutes entrypoints", () => {
         github: { owner: "Unson-LLC", repo: "mana" } }]);
       expect(() => meetingMinutesRuntimeConfig({ MEETING_MINUTES_ENABLED: "true",
         MEETING_MINUTES_ROUTER_CHANNEL_ID: "CROUTER", MEETING_MINUTES_DESTINATIONS_JSON: invalid,
-        MEETING_MINUTES_OPERATOR_USER_IDS: "U1" })).toThrow("meeting_minutes_destinations_invalid");
+      MEETING_MINUTES_OPERATOR_USER_IDS: "U1" })).toThrow("meeting_minutes_destinations_invalid");
     });
+  it("rejects a static OutcomeCase on a reusable destination", () => {
+    const invalid = JSON.stringify([{ id: "mana", projectId: "mana", contextProjectCode: "mana",
+      taskProjectCodes: ["mana"], taskBoardTargetId: "minutes-mana", name: "mana",
+      organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST", outcomeCaseId: "case_01",
+      github: { owner: "Unson-LLC", repo: "mana" } }]);
+    expect(() => meetingMinutesRuntimeConfig({ MEETING_MINUTES_ENABLED: "true",
+      MEETING_MINUTES_ROUTER_CHANNEL_ID: "CROUTER", MEETING_MINUTES_DESTINATIONS_JSON: invalid,
+      MEETING_MINUTES_OPERATOR_USER_IDS: "U1" })).toThrow("meeting_minutes_destinations_invalid");
+  });
   it("rejects destinations without every explicit Brainbase binding", () => {
     for (const field of ["contextProjectCode", "taskProjectCodes", "taskBoardTargetId"] as const) {
       const destination = JSON.parse(destinations) as Array<Record<string, unknown>>;
@@ -86,6 +95,15 @@ describe("meeting minutes entrypoints", () => {
     expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1", destinationId: "mana",
       workspaceId: "T1", appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" })).toBe(true);
     expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1" })).toBe(false);
+  });
+  it("accepts only a valid per-run OutcomeCase selection", () => {
+    const selected = { kind: "meeting_minutes_selection", runId: "E1_F1", destinationId: "mana",
+      workspaceId: "T1", appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
+    expect(isMeetingMinutesSelection({ ...selected, outcomeCaseId: "case_01",
+      outcomeCaseSource: "admin_authorized_retry" })).toBe(true);
+    expect(isMeetingMinutesSelection({ ...selected, outcomeCaseId: "case id",
+      outcomeCaseSource: "admin_authorized_retry" })).toBe(false);
+    expect(isMeetingMinutesSelection({ ...selected, outcomeCaseId: "case_01" })).toBe(false);
   });
   it("formats an administrative retry timestamp as a valid Slack action timestamp", () => {
     const actionTs = currentMeetingMinutesActionTs(1_787_046_249_000);

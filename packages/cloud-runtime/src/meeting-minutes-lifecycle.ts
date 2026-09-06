@@ -120,7 +120,7 @@ async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
   // completed run as a source-status failure.
   const receipt = await buildMeetingMinutesRunReceipt(run);
   if (!receipt || run.runReceipt?.status === "delivered") return;
-  run.runReceipt = { caseId: run.destination?.outcomeCaseId, idempotencyKey: receipt.delivery.idempotency_key, status: "pending" };
+  run.runReceipt = { caseId: run.outcomeCaseId, idempotencyKey: receipt.delivery.idempotency_key, status: "pending" };
   run.updatedAt = new Date().toISOString();
   await saveMeetingMinutesRun(fs, run);
   if (!options.emitRunReceipt) return;

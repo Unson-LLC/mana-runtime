@@ -184,6 +184,9 @@ function validMeetingMinutesInteractionValue(
     const qualifiedDestinationId = actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)
       ? actionId.slice(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`.length) : undefined;
     return !!destinationId && meetingMinutesDestinationIdPattern.test(destinationId) &&
+      // OutcomeCase attachment is an explicit Host/admin recovery operation.
+      // A signed Slack interaction chooses only its delivery destination.
+      value?.outcomeCaseId === undefined &&
       (qualifiedDestinationId === undefined || meetingMinutesDestinationIdPattern.test(qualifiedDestinationId));
   }
   if (actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`)) {

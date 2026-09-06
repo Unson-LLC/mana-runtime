@@ -60,8 +60,9 @@ import {
   processMeetingMinutesRedo,
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
-import type { MeetingMinutesDestination, MeetingMinutesRecovery, MeetingMinutesRecoveryAuthorization,
-  MeetingMinutesRedo, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { OUTCOME_CASE_ID_PATTERN, type MeetingMinutesDestination, type MeetingMinutesRecovery,
+  type MeetingMinutesRecoveryAuthorization, type MeetingMinutesRedo, type MeetingMinutesRun,
+  type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import {
   handleMeetingMinutesInteractionEntrypoint,
   type TenantInteractionEffects,
@@ -634,7 +635,9 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 
 function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
   return { runId: run.runId, status: run.status, updatedAt: run.updatedAt,
-    destinationId: run.destination?.id, diagnostics: run.diagnostics,
+    destinationId: run.destination?.id, outcomeCaseId: run.outcomeCaseId, diagnostics: run.diagnostics,
+    runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,
+      status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt } : undefined,
     taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
       pendingPresent: Boolean(run.taskRegistration?.pending),
       failure: run.taskRegistration?.failure,
@@ -3180,11 +3183,11 @@ export default {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } | null;
+      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } | null;
       try {
         const parsed = await readAdminJsonRequest(request);
         payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } : null;
+          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } : null;
       } catch (error) {
         const rejected = adminJsonInputErrorResponse(error);
         if (rejected) return rejected;
@@ -3196,8 +3199,14 @@ export default {
         ? payload.workspaceId : undefined;
       const actionTs = typeof payload?.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
         ? payload.actionTs : undefined;
+      const outcomeCaseId = payload?.outcomeCaseId === undefined ? undefined
+        : typeof payload.outcomeCaseId === "string" && OUTCOME_CASE_ID_PATTERN.test(payload.outcomeCaseId)
+          ? payload.outcomeCaseId : null;
       if (!tenantId || !workspaceId || !actionTs) {
         return Response.json({ error: "meeting_minutes_admin_retry_scope_invalid" }, { status: 400 });
+      }
+      if (outcomeCaseId === null) {
+        return Response.json({ error: "meeting_minutes_admin_retry_outcome_case_invalid" }, { status: 400 });
       }
       const runId = authorizedRetryMatch[1]!;
       const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
@@ -3222,10 +3231,12 @@ export default {
         threadTs: run.sourceThreadTs,
         userId: authorization.requesterId,
         actionTs,
+        ...(outcomeCaseId ? { outcomeCaseId, outcomeCaseSource: "admin_authorized_retry" as const } : {}),
       };
       const tenantContext = await reissueMeetingMinutesAdminSelectionTenantContext(env, run, selection);
       await env.TECHKNIGHT_EVENTS.send({ schema_version: "1.0", tenant_context: tenantContext, payload: selection });
-      return Response.json({ runId, status: run.status, destinationId: run.destination.id, enqueued: true });
+      return Response.json({ runId, status: run.status, destinationId: run.destination.id,
+        ...(outcomeCaseId ? { outcomeCaseId } : {}), enqueued: true });
     }
     const authorizedStatusMatch = url.pathname.match(
       /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-status$/,
@@ -3283,11 +3294,11 @@ export default {
         if (!runAdminMatch[2] || !run.destination) {
           return Response.json({ error: "meeting_minutes_retry_not_available" }, { status: 409 });
         }
-        let payload: { taskIds?: unknown; actionTs?: unknown } | null;
+        let payload: { taskIds?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } | null;
         try {
           const parsed = await readAdminJsonRequest(request);
           payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? parsed as { taskIds?: unknown; actionTs?: unknown } : null;
+            ? parsed as { taskIds?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } : null;
         } catch (error) {
           const rejected = adminJsonInputErrorResponse(error);
           if (rejected) return rejected;
@@ -3296,8 +3307,17 @@ export default {
         const actionTs = typeof payload?.actionTs === "string"
           && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
           ? payload.actionTs : undefined;
+        const outcomeCaseId = payload?.outcomeCaseId === undefined ? undefined
+          : typeof payload.outcomeCaseId === "string" && OUTCOME_CASE_ID_PATTERN.test(payload.outcomeCaseId)
+            ? payload.outcomeCaseId : null;
         if (!actionTs) {
           return Response.json({ error: "meeting_minutes_admin_tenant_context_required" }, { status: 400 });
+        }
+        if (outcomeCaseId === null) {
+          return Response.json({ error: "meeting_minutes_admin_retry_outcome_case_invalid" }, { status: 400 });
+        }
+        if (runAdminMatch[2] === "/adopt-tasks" && outcomeCaseId !== undefined) {
+          return Response.json({ error: "meeting_minutes_task_adoption_outcome_case_forbidden" }, { status: 400 });
         }
         const selection = { kind: "meeting_minutes_selection", runId,
           destinationId: run.destination.id, workspaceId: adminWorkspaceId,
@@ -3305,7 +3325,9 @@ export default {
           channelId: adminTenantContext.slack.channel_id,
           userId: adminTenantContext.actor.authenticated_subject_id,
           threadTs: adminTenantContext.slack.thread_ts,
-          actionTs } satisfies MeetingMinutesSelection;
+          actionTs,
+          ...(outcomeCaseId ? { outcomeCaseId, outcomeCaseSource: "admin_authorized_retry" as const } : {}),
+        } satisfies MeetingMinutesSelection;
         const tenantBody: TenantQueueBody<MeetingMinutesSelection> = {
           schema_version: "1.0",
           tenant_context: adminTenantContext,
