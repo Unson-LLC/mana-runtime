@@ -17,6 +17,7 @@ import {
 } from "./company-authority-queue-runtime.js";
 import type { ExpectedTenantScope, TenantContextEnvelope } from "./contracts.js";
 import { TenantBoundaryError } from "./errors.js";
+import { SlackThreadContextError } from "../slack-thread-context.js";
 
 export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
   create_outbox(context: AcceptedCompanyAuthorityContext): ExternalEffectOutboxStore;
@@ -74,6 +75,14 @@ export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
             ...(typeof error.details?.scope_reason === "string"
               ? { scope_reason: error.details.scope_reason }
               : {}),
+          } : error instanceof SlackThreadContextError ? {
+            stage: `slack_thread_context.${error.diagnostics?.stage ?? "unknown"}`,
+            ...(error.diagnostics?.upstreamCode ? { upstream_code: error.diagnostics.upstreamCode } : {}),
+            ...(error.diagnostics?.status !== undefined ? { status: error.diagnostics.status } : {}),
+            ...(error.diagnostics?.providerOperation
+              ? { provider_operation: error.diagnostics.providerOperation }
+              : {}),
+            ...(error.diagnostics?.slackError ? { slack_error: error.diagnostics.slackError } : {}),
           } : {}),
         }));
         throw error;

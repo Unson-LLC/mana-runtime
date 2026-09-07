@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { hydrateSlackQueueEventThreadContext } from "../slack-thread-context.js";
 import type { SlackQueueEvent } from "../types.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 
 function event(overrides: Partial<SlackQueueEvent> = {}): SlackQueueEvent {
   return {
@@ -97,6 +98,31 @@ describe("Cloudflare Slack thread context adapter", () => {
       fetch: fetchMock,
     })).rejects.toMatchObject({
       code: "slack_thread_history_unavailable",
+      diagnostics: {
+        stage: "provider_response",
+        status: 200,
+        slackError: "missing_scope",
+      },
+    });
+  });
+
+  it("preserves safe trusted-forwarder diagnostics when the request fails", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TenantBoundaryError(
+      "credential_lease",
+      "PROVIDER_OPERATION_UNSUPPORTED",
+      "PROVIDER_OPERATION_UNSUPPORTED",
+      { status: 403, provider_operation: "slack.conversations.replies.get" },
+    ));
+    await expect(hydrateSlackQueueEventThreadContext(event(), {
+      fetch: fetchMock,
+    })).rejects.toMatchObject({
+      code: "slack_thread_history_unavailable",
+      diagnostics: {
+        stage: "request",
+        upstreamCode: "PROVIDER_OPERATION_UNSUPPORTED",
+        status: 403,
+        providerOperation: "slack.conversations.replies.get",
+      },
     });
   });
 
