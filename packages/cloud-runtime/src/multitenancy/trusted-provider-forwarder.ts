@@ -387,7 +387,7 @@ export function createBrainbaseTrustedProviderForwarderFromEnv(
 ): TrustedProviderForwarder {
   const endpoint = new URL("https://brainbase.internal/api/v1/runtime/provider-requests:forward");
   const timeoutMs = Number(options.env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000");
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new Error("runtime_configuration_invalid");
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) throw new Error("runtime_configuration_invalid");
   const serviceFetch = options.env.BRAINBASE_TENANT_RUNTIME_SERVICE
     ? options.env.BRAINBASE_TENANT_RUNTIME_SERVICE.fetch.bind(options.env.BRAINBASE_TENANT_RUNTIME_SERVICE)
     : undefined;
