@@ -265,6 +265,22 @@ describe("会社別Cloudflare deployment", () => {
         deliveryScopes: [{ connector: "slack", channelId: "C0BMNSP6C80" }],
       },
       {
+        placementId: "unson-sato",
+        channelId: "D0BPK9TFZU6",
+        channelName: "sato-mana-dm",
+        projectCodes: ["brainbase"],
+        audience: { type: "operator", allowedUserIds: ["U088D1HBY6L"] },
+        agent: { model: "sonnet", escalationEmployee: "critical-reviewer" },
+        runtimeContext: {
+          persona: "Ryoko（佐藤圭吾のパーソナルAIアシスタント兼AI組織のCOO）",
+          instructions: ["本人専用の個人KGはこのDMでのみ登録・検索する", "確認できないことは推測せず不確実性を正直に伝える"],
+          skills: ["management"],
+        },
+        respondTo: { im: "always", mpim: "never", channel: "never", engagedThreads: true },
+        capabilities: { mcp: ["gateway"], gatewayTools: ["search_personal_kg", "register_personal_kg"] },
+        deliveryScopes: [{ connector: "slack", channelId: "D0BPK9TFZU6" }],
+      },
+      {
         placementId: "mana-autonomy",
         channelId: "C0BKE4D0TK9",
         channelName: "mana-autonomy",
@@ -571,6 +587,7 @@ describe("会社別Cloudflare deployment", () => {
       "biz-meeting-router": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
       "minutes-ncom-catalyst": ["prj_01KGHVCMA6R6A9MEMGKHRXQ5J0"],
       "mana-dev-biz": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
+      "unson-sato": ["prj_01KGCS8CAJKKDWACPNK1E5WX8H"],
     });
     const taskWritePolicy = JSON.parse(unson.vars.TASK_WRITE_POLICY_JSON) as {
       rules: Array<{ effect: string; placements: string[]; projects: string[] }>;
