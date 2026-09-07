@@ -312,6 +312,9 @@ function tenantSlackIngressFailureResponse(input: {
     : input.error instanceof RuntimeBindingError ? 403 : 503;
   const retryable = status === 503;
   const correlationId = deriveCorrelationId(input.eventId, input.stage, code);
+  const diagnostic = input.error instanceof TenantBoundaryError
+    ? input.error.details
+    : undefined;
   console.error(JSON.stringify({
     event: "slack_tenant_ingress_failed",
     event_id: input.eventId,
@@ -322,6 +325,11 @@ function tenantSlackIngressFailureResponse(input: {
     correlation_id: correlationId,
     retryable,
     ...(input.error instanceof TenantBoundaryError ? { boundary: input.error.boundary } : {}),
+    ...(typeof diagnostic?.phase === "string" ? { failure_phase: diagnostic.phase } : {}),
+    ...(typeof diagnostic?.retrieval_state === "string"
+      ? { authority_retrieval_state: diagnostic.retrieval_state }
+      : {}),
+    ...(typeof diagnostic?.status === "number" ? { upstream_status: diagnostic.status } : {}),
   }));
   return Response.json({
     error: code,
