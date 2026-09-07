@@ -3,6 +3,7 @@ import {
   type SlackThreadRepliesPage,
 } from "@openryoko/slack-thread-context";
 import type { SlackQueueEvent } from "./types.js";
+import { TenantBoundaryError } from "./multitenancy/errors.js";
 
 export type SlackThreadContextErrorCode =
   | "slack_thread_history_token_missing"
@@ -13,6 +14,13 @@ export class SlackThreadContextError extends Error {
   constructor(
     public readonly code: SlackThreadContextErrorCode,
     public readonly retryAfterSeconds?: number,
+    public readonly diagnostics?: Readonly<{
+      stage: "request" | "response_decode" | "provider_response";
+      upstreamCode?: string;
+      status?: number;
+      providerOperation?: string;
+      slackError?: string;
+    }>,
   ) {
     super(code);
     this.name = "SlackThreadContextError";
@@ -60,8 +68,17 @@ export async function hydrateSlackQueueEventThreadContext(
         },
         signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
       });
-    } catch {
-      throw new SlackThreadContextError("slack_thread_history_unavailable");
+    } catch (error) {
+      throw new SlackThreadContextError("slack_thread_history_unavailable", undefined, {
+        stage: "request",
+        ...(error instanceof TenantBoundaryError ? {
+          upstreamCode: error.code,
+          ...(typeof error.details?.status === "number" ? { status: error.details.status } : {}),
+          ...(typeof error.details?.provider_operation === "string"
+            ? { providerOperation: error.details.provider_operation }
+            : {}),
+        } : {}),
+      });
     }
     if (response.status === 429) {
       throw new SlackThreadContextError("slack_thread_history_rate_limited", retryAfterSeconds(response));
@@ -70,10 +87,19 @@ export async function hydrateSlackQueueEventThreadContext(
     try {
       payload = await response.json() as SlackRepliesResponse;
     } catch {
-      throw new SlackThreadContextError("slack_thread_history_unavailable");
+      throw new SlackThreadContextError("slack_thread_history_unavailable", undefined, {
+        stage: "response_decode",
+        status: response.status,
+      });
     }
     if (!response.ok || payload.ok !== true) {
-      throw new SlackThreadContextError("slack_thread_history_unavailable");
+      throw new SlackThreadContextError("slack_thread_history_unavailable", undefined, {
+        stage: "provider_response",
+        status: response.status,
+        ...(typeof payload.error === "string" && /^[a-z0-9_]{1,64}$/u.test(payload.error)
+          ? { slackError: payload.error }
+          : {}),
+      });
     }
     if (!options.contextAfterTs) return payload;
     const boundary = Number(options.contextAfterTs);

@@ -29,6 +29,7 @@ import type {
   TenantContextEnvelope,
 } from "../multitenancy/contracts.js";
 import type { SlackQueueEvent } from "../types.js";
+import { SlackThreadContextError } from "../slack-thread-context.js";
 
 const tenantContext = {
   expires_at: "2026-09-02T00:05:00.000Z",
@@ -345,6 +346,45 @@ describe("company authority Queue production seam", () => {
       envelope: externalEnvelope,
       payload,
     });
+  });
+
+  it("logs safe Slack thread hydration diagnostics when the selected container fails", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const route = createCompanyAuthoritySelectedContainerProviderRoute({
+      create_outbox: () => new ExternalEffectOutboxMemoryStore(),
+      expected_audience: "mana-runtime",
+      desired_effect_by_capability: { company_read: "read" },
+      execute_container: vi.fn().mockRejectedValue(new SlackThreadContextError(
+        "slack_thread_history_unavailable",
+        undefined,
+        {
+          stage: "request",
+          upstreamCode: "PROVIDER_OPERATION_UNSUPPORTED",
+          status: 403,
+          providerOperation: "slack.conversations.replies.get",
+        },
+      )),
+    });
+
+    await expect(route.provider_send({
+      provider_key: "provider-a",
+      context,
+      request,
+      envelope: runtimeEnvelope,
+      payload,
+    })).rejects.toMatchObject({ code: "slack_thread_history_unavailable" });
+
+    expect(errorLog).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toEqual({
+      event: "company_authority_provider_failed",
+      correlation_id: runtimeEnvelope.correlation_id,
+      code: "UPSTREAM_UNAVAILABLE",
+      stage: "slack_thread_context.request",
+      upstream_code: "PROVIDER_OPERATION_UNSUPPORTED",
+      status: 403,
+      provider_operation: "slack.conversations.replies.get",
+    });
+    errorLog.mockRestore();
   });
 
   it("isolates the accepted snapshot from provider mutation", async () => {
