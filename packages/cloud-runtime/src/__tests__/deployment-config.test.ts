@@ -599,6 +599,7 @@ describe("会社別Cloudflare deployment", () => {
     )?.projects).toEqual(["mana"]);
     expect(JSON.parse(unson.vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON)).toEqual({
       prj_01KGHVCMA35JHSMXTSWQAS04PS: "mana",
+      prj_01KGCS8CAJKKDWACPNK1E5WX8H: "brainbase",
     });
     expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",

@@ -37,7 +37,7 @@
     "BRAINBASE_GRAPH_API_BASE_URL": "https://bb.unson.jp",
     "BRAINBASE_MCP_BASE_URL": "https://bb.unson.jp/runtime-mcp",
     "BRAINBASE_JUDGMENT_PROJECT_CODE": "mana",
-    "BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON": "{\"prj_01KGHVCMA35JHSMXTSWQAS04PS\":\"mana\"}",
+    "BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON": "{\"prj_01KGHVCMA35JHSMXTSWQAS04PS\":\"mana\",\"prj_01KGCS8CAJKKDWACPNK1E5WX8H\":\"brainbase\"}",
     "GOOGLE_DRIVE_MCP_BASE_URL": "https://bb.unson.jp/runtime-google-drive",
     "CONTRACT_LEDGER_ENABLED": "true",
     "CONTRACT_LEDGER_WRITE_MODE": "existing",
