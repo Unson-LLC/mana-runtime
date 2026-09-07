@@ -165,8 +165,15 @@ export function buildRuntimeClaudeCommand(
   const claude = purpose === "meeting-minutes" && options.traceMeetingMinutes
     ? "node /tmp/meeting-minutes-trace-runner.mjs --"
     : "node /opt/mana/tenant-claude-runner.mjs --";
+  // Sonnet minutes summarize an existing transcript. Bound thinking separately
+  // from the structured answer so adaptive reasoning cannot consume the run.
+  // Keep the same limits for diagnostic and normal execution, and retain inputs.
+  const minutesGenerationEnv = purpose === "meeting-minutes" && config.model === "sonnet"
+      && options.structuredOutput === "meeting-minutes"
+    ? "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1 MAX_THINKING_TOKENS=2048 CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384 CLAUDE_CODE_EFFORT_LEVEL=medium "
+    : "";
   const base = purpose === "meeting-minutes"
-    ? `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --setting-sources '' --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg}`
+    ? `${minutesGenerationEnv}${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --setting-sources '' --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg}`
       + ` --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config < ${promptPath}`
     : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}${judgmentBootstrapArg}`
       + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${REPLY_SETTINGS_PATH}` : ""}`
