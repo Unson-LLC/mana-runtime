@@ -351,6 +351,8 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
     ["missing Cloudflare service binding", {}],
     ["invalid timeout", { BRAINBASE_TENANT_RUNTIME_SERVICE: BASE_ENV.BRAINBASE_TENANT_RUNTIME_SERVICE,
       BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "0" }],
+    ["timeout above provider generation ceiling", { BRAINBASE_TENANT_RUNTIME_SERVICE: BASE_ENV.BRAINBASE_TENANT_RUNTIME_SERVICE,
+      BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "120001" }],
   ])("rejects unsafe internal service configuration: %s", (_label, env) => {
     expect(() => createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: TENANT_CONTEXT })).toThrow("runtime_configuration_invalid");
   });
