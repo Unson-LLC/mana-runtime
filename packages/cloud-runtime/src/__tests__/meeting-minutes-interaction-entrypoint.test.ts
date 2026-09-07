@@ -274,7 +274,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(deferred).toHaveLength(1);
     await vi.waitFor(() => expect(slackUpdate).toHaveBeenCalledWith(
       "https://hooks.slack.com/actions/T1/B1/token",
-      expect.objectContaining({ method: "POST", body: expect.stringContaining("保存先を受け付けました") }),
+      expect.objectContaining({ method: "POST", body: expect.stringContaining("保存先が選択されました") }),
     ));
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
     expect(slackDelivery).toHaveBeenCalledWith(
@@ -315,9 +315,8 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature } }), env as never,
       { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]),
       undefined, undefined, undefined, send, resolveTenantEffects);
-    expect(response.status).toBe(503); await Promise.all(deferred);
-    expect(await response.json()).toEqual(expect.objectContaining({ error: "temporary_failure",
-      correlation_id: expect.stringMatching(/^cor_/) }));
+    expect(response.status).toBe(200); await Promise.all(deferred);
+    expect(await response.text()).toBe("");
     const projected = JSON.stringify(slackUpdate.mock.calls);
     expect(projected).toContain("エラーコード: temporary_failure");
     expect(projected).toContain("問い合わせID: cor_");
@@ -342,7 +341,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the public HTTP failure without fetching an unsafe response_url", async () => {
+  it("acknowledges transport while refusing to fetch an unsafe response_url", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "secret";
     const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },
       response_url: "https://example.com/actions/T1/B1/token", actions: [{
@@ -363,10 +362,8 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
     }), env as never, { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never,
     new Set(["U1"]), undefined, undefined, undefined, send, vi.fn(async () => { throw new Error("Bearer secret"); }));
-    expect(response.status).toBe(503); await Promise.all(deferred);
-    expect(await response.json()).toEqual(expect.objectContaining({
-      error: "temporary_failure", correlation_id: expect.stringMatching(/^cor_/),
-    }));
+    expect(response.status).toBe(200); await Promise.all(deferred);
+    expect(await response.text()).toBe("");
     expect(slackUpdate).not.toHaveBeenCalled(); vi.unstubAllGlobals();
   });
 

@@ -68,13 +68,35 @@ jobs:
             def n: if type == "number" then . else null end;
             def b: if type == "boolean" then . else null end;
             def allowed($values): . as $v | if $values|index($v) then $v else null end;
+            def model: if type == "string" then if test("^(sonnet|opus|haiku|claude-([0-9]+-){0,2}(sonnet|opus|haiku)(-[A-Za-z0-9]+){0,8})$") then . else null end else null end;
+            def usage: {inputTokens:(.inputTokens|n),outputTokens:(.outputTokens|n),
+              cacheCreationInputTokens:(.cacheCreationInputTokens|n),cacheReadInputTokens:(.cacheReadInputTokens|n)};
+            def trace: if type != "object" then null else {requestCount:(.requestCount|n),events:[.events[]? | {
+              event:(.event|allowed(["runner_started","runner_error","runner_finished","stdout_event","upstream_request_start",
+                "upstream_response_headers","upstream_response_first_body_chunk","upstream_response_last_body_chunk",
+                "upstream_response_end","upstream_response_error","upstream_response_progress","upstream_sse_event","child_spawn","child_error","child_exit","child_close",
+                "proxy_close_start","proxy_close_error","proxy_close_end"])),
+              model:(.model|model),elapsedMs:(.elapsedMs|n),requestIndex:(.requestIndex|n),requestCount:(.requestCount|n),requestBytes:(.requestBytes|n),
+              maxTokens:(.maxTokens|n),thinkingBudgetTokens:(.thinkingBudgetTokens|n),thinkingType:(.thinkingType|allowed(["enabled","disabled","adaptive"])),
+              effort:(.effort|allowed(["low","medium","high","max","xhigh"])),statusCode:(.statusCode|n),bodyBytes:(.bodyBytes|n),
+              type:(.type|allowed(["system","assistant","user","result","error"])),
+              subtype:(.subtype|allowed(["init","hook_response","success","error_during_execution","error_max_turns","max_turns_reached","error_max_budget_usd","api_error","rate_limit_error","tool_use"])),
+              textChars:(.textChars|n),thinkingChars:(.thinkingChars|n),partialJsonChars:(.partialJsonChars|n),
+              deltaType:(.deltaType|allowed(["text_delta","thinking_delta","input_json_delta","signature_delta"])),
+              sseType:(.sseType|allowed(["message_start","message_delta","message_stop"])),usage:(.usage|usage),exitCode:(.exitCode|n),
+              errorCode:(.errorCode|allowed(["provider_fetch_failed","provider_stream_failed","child_spawn_failed","proxy_close_failed","runner_failed"]))
+            }]} end;
             {ok:(.ok|b), generationOk:(.generationOk|b), stage:(.stage|allowed(["authorization","execution","accounting","download","context","generation","completed"])),
              code:(.code|allowed(["meeting_minutes_generation_probe_failed","meeting_minutes_destination_missing","meeting_minutes_transcript_empty","meeting_minutes_transcript_changed","meeting_minutes_context_identity_missing","meeting_minutes_context_receipt_missing","meeting_minutes_context_invalid_receipt","meeting_minutes_context_identity_mismatch","meeting_minutes_context_changed","meeting_minutes_context_partial","meeting_minutes_context_unavailable","meeting_minutes_context_output_mismatch","meeting_minutes_context_source_ref_unknown","meeting_minutes_context_attestation_mismatch","meeting_minutes_context_mode_invalid","meeting_minutes_generation_failed","meeting_minutes_generation_invalid","meeting_minutes_generation_result_error","meeting_minutes_generation_result_missing","meeting_minutes_generation_stream_malformed","meeting_minutes_generation_stream_too_large","meeting_minutes_generation_stream_too_many_events","meeting_minutes_probe_scope_invalid","meeting_minutes_run_not_found","meeting_minutes_probe_not_authorized","meeting_minutes_intake_paused","meeting_minutes_probe_execution_failed","UPSTREAM_UNAVAILABLE","CROSS_TENANT_CANDIDATE","PROJECT_SCOPE_MISMATCH","QUOTA_EXCEEDED","QUOTA_APPROVAL_REQUIRED","TENANT_CONTEXT_EXPIRED","CONNECTION_REVOKED"])), durationMs:(.durationMs|n),
              progress:(.progress|{downloaded:(.downloaded|b),transcriptVerified:(.transcriptVerified|b),
                contextResolved:(.contextResolved|b),generationStarted:(.generationStarted|b),generationCompleted:(.generationCompleted|b)}),
-             generation:(.generation|{elapsedMs:(.elapsedMs|n),timeoutMs:(.timeoutMs|n),exitCode:(.exitCode|n),
+             generation:(.generation|{executionTrace:(.executionTrace|trace),inputChars:(.inputChars|{transcript:(.transcript|n),context:(.context|n),prompt:(.prompt|n)}),
+               phaseTimings:(.phaseTimings|{prepareMs:(.prepareMs|n),cleanupMs:(.cleanupMs|n)}),
+               elapsedMs:(.elapsedMs|n),timeoutMs:(.timeoutMs|n),exitCode:(.exitCode|n),
                outcome:(.outcome|allowed(["success","timeout","nonzero_exit","transport_failure"])),
                stderrCode:(.stderrCode|allowed(["TIMEOUT","RATE_LIMITED","AUTHENTICATION_FAILED","HOOK_FAILED","CLI_ERROR","UNKNOWN"])),
+               stdoutErrorCode:(.stdoutErrorCode|allowed(["PROVIDER_STATUS","AUTHENTICATION_FAILED","RATE_LIMITED","MODEL_ERROR","BOUNDARY_ERROR","CLI_ERROR","HOOK_FAILED","MAX_TURNS","MAX_BUDGET","STRUCTURED_OUTPUT","EXECUTION_ERROR","UNKNOWN"])),
+               stdoutStatusCode:(.stdoutStatusCode|allowed([400,401,403,429,500,502,503,504])),
                stdoutBytes:(.stdoutBytes|n),streamEventCount:(.streamEventCount|n),
                progress:(.progress|{prompt_written:(.prompt_written|b),exec_started:(.exec_started|b),stdout_observed:(.stdout_observed|b),
                  hook_observed:(.hook_observed|b),result_observed:(.result_observed|b)})}),

@@ -1,3 +1,4 @@
+import { sanitizeMeetingMinutesExecutionTrace, type MeetingMinutesExecutionTrace } from "./meeting-minutes-execution-trace.js";
 import {
   assertMeetingMinutesContextUsable,
   bindGeneratedMeetingMinutesContext,
@@ -9,6 +10,8 @@ import type {
   MeetingMinutesContextReceipt,
   MeetingMinutesDestination,
   MeetingMinutesGenerationDiagnostics,
+  MeetingMinutesGenerationStdoutErrorCode,
+  MeetingMinutesGenerationStdoutStatusCode,
   MeetingMinutesRun,
 } from "./meeting-minutes-contracts.js";
 
@@ -41,12 +44,17 @@ export interface MeetingMinutesGenerationProbeResult {
 }
 
 export interface SafeMeetingMinutesGenerationDiagnostics {
+  executionTrace: MeetingMinutesExecutionTrace | null;
+  phaseTimings: { prepareMs: number | null; cleanupMs: number | null } | null;
+  inputChars: { transcript: number | null; context: number | null; prompt: number | null } | null;
   outcome: MeetingMinutesGenerationDiagnostics["outcome"] | null;
   model: string | null;
   timeoutMs: number | null;
   elapsedMs: number | null;
   exitCode: number | null;
   stderrCode: MeetingMinutesGenerationDiagnostics["stderrCode"] | null;
+  stdoutErrorCode: MeetingMinutesGenerationStdoutErrorCode | null;
+  stdoutStatusCode: MeetingMinutesGenerationStdoutStatusCode | null;
   progress: {
     prompt_written: boolean | null;
     exec_started: boolean | null;
@@ -94,6 +102,13 @@ const GENERATION_OUTCOMES = new Set<MeetingMinutesGenerationDiagnostics["outcome
 const STDERR_CODES = new Set<MeetingMinutesGenerationDiagnostics["stderrCode"]>([
   "TIMEOUT", "RATE_LIMITED", "AUTHENTICATION_FAILED", "HOOK_FAILED", "CLI_ERROR", "UNKNOWN",
 ]);
+const STDOUT_ERROR_CODES = new Set<MeetingMinutesGenerationStdoutErrorCode>([
+  "PROVIDER_STATUS", "AUTHENTICATION_FAILED", "RATE_LIMITED", "MODEL_ERROR", "BOUNDARY_ERROR", "CLI_ERROR",
+  "HOOK_FAILED", "MAX_TURNS", "MAX_BUDGET", "STRUCTURED_OUTPUT", "EXECUTION_ERROR", "UNKNOWN",
+]);
+const STDOUT_STATUS_CODES = new Set<MeetingMinutesGenerationStdoutStatusCode>([
+  400, 401, 403, 429, 500, 502, 503, 504,
+]);
 const SAFE_MODELS = new Set(["sonnet", "opus"]);
 
 function safeNumber(value: unknown): number | null {
@@ -112,10 +127,19 @@ export function sanitizeMeetingMinutesGenerationDiagnostics(value: unknown): Saf
     ? input.progress : undefined;
   const bool = (item: unknown): boolean | null => typeof item === "boolean" ? item : null;
   return {
+    executionTrace: sanitizeMeetingMinutesExecutionTrace(input.executionTrace),
+    phaseTimings: input.phaseTimings ? { prepareMs: safeNumber(input.phaseTimings.prepareMs),
+      cleanupMs: safeNumber(input.phaseTimings.cleanupMs) } : null,
+    inputChars: input.inputChars ? { transcript: safeNumber(input.inputChars.transcript),
+      context: safeNumber(input.inputChars.context), prompt: safeNumber(input.inputChars.prompt) } : null,
     outcome: GENERATION_OUTCOMES.has(input.outcome) ? input.outcome! : null,
     model: safeModel(input.model), timeoutMs: safeNumber(input.timeoutMs), elapsedMs: safeNumber(input.elapsedMs),
     exitCode: typeof input.exitCode === "number" && Number.isSafeInteger(input.exitCode) ? input.exitCode : null,
     stderrCode: STDERR_CODES.has(input.stderrCode) ? input.stderrCode! : null,
+    stdoutErrorCode: input.stdoutErrorCode !== undefined && STDOUT_ERROR_CODES.has(input.stdoutErrorCode)
+      ? input.stdoutErrorCode : null,
+    stdoutStatusCode: input.stdoutStatusCode !== undefined && STDOUT_STATUS_CODES.has(input.stdoutStatusCode)
+      ? input.stdoutStatusCode : null,
     progress: {
       prompt_written: bool(progress && "prompt_written" in progress ? progress.prompt_written : undefined),
       exec_started: bool(progress && "exec_started" in progress ? progress.exec_started : undefined),

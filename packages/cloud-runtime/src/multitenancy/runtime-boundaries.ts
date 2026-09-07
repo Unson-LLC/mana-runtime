@@ -44,6 +44,10 @@ export interface TenantContextIssueRequest {
   };
   /** Trusted project scope resolved from the runtime placement, never from Slack input. */
   trusted_project_ids?: readonly string[];
+  /** Preserve the signed Company Authority resource binding when refreshing a long-running operation. */
+  authority_resource_ref?: string;
+  /** Preserve the observed project alias used to resolve the canonical project. */
+  authority_project_hint?: string;
   /** Canonical actor identity. Slack ingress omits this and defaults to the Slack requester. */
   provider_identity?: {
     provider: "slack" | "service";
@@ -135,6 +139,10 @@ export async function resolveSlackWorkerIngress(input: {
   required_scopes: readonly string[];
   required_authorization: TenantContextIssueRequest["required_authorization"];
   trusted_project_ids?: readonly string[];
+  /** Preserve the signed Company Authority resource binding when refreshing a long-running operation. */
+  authority_resource_ref?: string;
+  /** Preserve the observed project alias used to resolve the canonical project. */
+  authority_project_hint?: string;
   tenant_revision?: string;
   provider_identity?: TenantContextIssueRequest["provider_identity"];
   authority: TenantAuthorityClient;
@@ -182,6 +190,12 @@ export async function resolveSlackWorkerIngress(input: {
     },
     required_authorization: structuredClone(input.required_authorization),
     ...(trustedProjectIds ? { trusted_project_ids: trustedProjectIds } : {}),
+    ...(input.authority_resource_ref
+      ? { authority_resource_ref: input.authority_resource_ref }
+      : {}),
+    ...(input.authority_project_hint
+      ? { authority_project_hint: input.authority_project_hint }
+      : {}),
     ...(input.provider_identity ? { provider_identity: structuredClone(input.provider_identity) } : {}),
   };
   assertSecretArtifactFree(issueRequest);
@@ -277,6 +291,12 @@ const SAFE_OPERATIONAL_FAILURE_REASONS = new Set([
   "meeting_minutes_task_registration_failed",
 ]);
 
+const SAFE_GENERATION_STDOUT_ERROR_CODES = new Set([
+  "PROVIDER_STATUS", "AUTHENTICATION_FAILED", "RATE_LIMITED", "MODEL_ERROR", "BOUNDARY_ERROR", "CLI_ERROR",
+  "HOOK_FAILED", "MAX_TURNS", "MAX_BUDGET", "STRUCTURED_OUTPUT", "EXECUTION_ERROR", "UNKNOWN",
+]);
+const SAFE_GENERATION_STDOUT_STATUS_CODES = new Set([400, 401, 403, 429, 500, 502, 503, 504]);
+
 function safeGenerationFailureDiagnostics(error: unknown): Record<string, string> {
   if (!error || typeof error !== "object" || !("generationDiagnostics" in error)) return {};
   const diagnostics = (error as { generationDiagnostics?: unknown }).generationDiagnostics;
@@ -287,6 +307,10 @@ function safeGenerationFailureDiagnostics(error: unknown): Record<string, string
   return {
     ...(typeof value.outcome === "string" ? { generation_outcome: value.outcome.slice(0, 32) } : {}),
     ...(typeof value.stderrCode === "string" ? { generation_stderr_code: value.stderrCode.slice(0, 64) } : {}),
+    ...(typeof value.stdoutErrorCode === "string" && SAFE_GENERATION_STDOUT_ERROR_CODES.has(value.stdoutErrorCode)
+      ? { generation_stdout_error_code: value.stdoutErrorCode } : {}),
+    ...(typeof value.stdoutStatusCode === "number" && SAFE_GENERATION_STDOUT_STATUS_CODES.has(value.stdoutStatusCode)
+      ? { generation_stdout_status_code: String(value.stdoutStatusCode) } : {}),
     ...(typeof value.exitCode === "number" && Number.isSafeInteger(value.exitCode)
       ? { generation_exit_code: String(value.exitCode) } : {}),
     ...(typeof value.elapsedMs === "number" && Number.isFinite(value.elapsedMs)

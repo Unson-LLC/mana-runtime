@@ -923,9 +923,11 @@ async function meetingMinutesRunReceiptRetryContext(
   actionTs: string,
 ) {
   const authorization = run.recoveryAuthorization;
-  const destination = meetingMinutesRuntimeConfig(env).destinations.find((item) => item.id === run.destination?.id);
+  // Receipt-only recovery must use the destination that was authorized and
+  // persisted with the completed run. Current routing metadata may legitimately
+  // change later and is not used to repeat any Slack, GitHub, or task effect.
+  const destination = run.destination;
   if (!authorization || !isMeetingMinutesAdminRecoveryEligible(run) || !destination
-    || jcsCanonicalize(destination) !== jcsCanonicalize(run.destination)
     || run.workspaceId !== authorization.workspaceId || run.sourceAppId !== authorization.appId
     || run.sourceChannelId !== authorization.channelId || run.sourceThreadTs !== authorization.threadTs
     || !authorization.requesterId || authorization.projectIds.length === 0) {
@@ -968,14 +970,18 @@ async function reissueLongRunningTenantContext(
   env: Env,
   accepted: TenantContextEnvelope,
   expectedScope: ExpectedTenantScope,
+  authorizationDesiredEffect?: CompanyAuthorityDesiredEffect,
+  authorityBinding?: { resource_ref: string; project_hint?: string },
 ): Promise<TenantContextEnvelope> {
   const projectIds = [...(expectedScope.project_ids ?? accepted.authorization.project_ids)];
   if (projectIds.length === 0 || !projectIds.includes(expectedScope.project_id)
     || accepted.slack.thread_ts !== expectedScope.thread_ts || !accepted.slack.requester_id) {
     deny("container_launch", "PROJECT_SCOPE_MISMATCH");
   }
-  const clients = tenantRuntimeClients(env, undefined,
-    tenantConfiguredDesiredEffectByCapability(env));
+  const configuredDesiredEffects = tenantConfiguredDesiredEffectByCapability(env);
+  const clients = tenantRuntimeClients(env, undefined, authorizationDesiredEffect
+    ? { ...configuredDesiredEffects, [expectedScope.capability_id]: authorizationDesiredEffect }
+    : configuredDesiredEffects);
   const fresh = (await resolveSlackWorkerIngress({
     identity: {
       provider: "slack",
@@ -994,6 +1000,12 @@ async function reissueLongRunningTenantContext(
       capability_id: expectedScope.capability_id,
     },
     trusted_project_ids: projectIds,
+    ...(authorityBinding ? {
+      authority_resource_ref: authorityBinding.resource_ref,
+      ...(authorityBinding.project_hint
+        ? { authority_project_hint: authorityBinding.project_hint }
+        : {}),
+    } : {}),
     tenant_revision: accepted.tenant.tenant_revision,
     authority: clients.authority,
     now: new Date().toISOString(),
@@ -1389,6 +1401,7 @@ function meetingMinutesClients(
   initialTenantContext: TenantContextEnvelope,
   tenantBoundaryHandle?: string,
   refresh?: { expectedScope: ExpectedTenantScope; verifier: TenantRuntimeBoundaryVerifier; now(): string },
+  traceExecution = false,
 ) {
   let effects = initialEffects;
   let tenantContext = initialTenantContext;
@@ -1491,7 +1504,7 @@ function meetingMinutesClients(
         return effects.boundary("container_launch", () => generateMeetingMinutesInSandbox(
           transcript, destination, context, mode, claudeRuntime,
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`),
-          tenantBoundaryHandle, observe));
+          tenantBoundaryHandle, observe, traceExecution));
       },
       saveGitHub: (input: Parameters<CloudflareMeetingMinutesGitHubClient["save"]>[0]) =>
         effects.boundary("mcp_gateway", () => new CloudflareMeetingMinutesGitHubClient(
@@ -2397,13 +2410,26 @@ export async function executeCompanyAuthorityReplyOperation(
   const clients = tenantRuntimeClients(env, tenantContext,
     config.desired_effect_by_capability);
   const now = () => new Date().toISOString();
-  const readSnapshot = () => clients.authority.read_workspace_connection(
-    tenantContext.workspace_connection.connection_id);
+  let activeTenantContext = tenantContext;
+  let activeRuntimeClients = clients;
+  const readSnapshot = () => activeRuntimeClients.authority.read_workspace_connection(
+    activeTenantContext.workspace_connection.connection_id);
   const resolveKey = (keyId: string) => resolveTenantVerificationKey(env, keyId);
   const verifier = new TenantRuntimeBoundaryVerifier({
     read_authoritative_snapshot: () => readSnapshot(), resolve_verification_key: resolveKey,
   });
+  let tenantContextRefreshed = false;
   const boundary = async <T>(name: BoundaryName, execute: () => Promise<T>): Promise<T> => {
+    // Keep the signed Company Authority check for the original context. Once a
+    // long-running operation reissues its tenant context, use the fresh
+    // context for nested boundaries instead of revalidating the expired
+    // context embedded in the original response.
+    if (tenantContextRefreshed) {
+      return executeTenantBoundary({
+        boundary: name, tenant_context: activeTenantContext, expected_scope: expectedScope,
+        verifier, now: now(), execute,
+      });
+    }
     const accepted = await executeCompanyAuthorityRuntimeBoundary({
       boundary: name, envelope, acceptance: { ...config.acceptance, now: now() },
       tenant_verifier: verifier, expected_tenant_scope: expectedScope, require_auto: true,
@@ -2439,10 +2465,20 @@ export async function executeCompanyAuthorityReplyOperation(
           : "reply_placement_project_identity",
       });
     }
-    const brokerFetch = createTenantCredentialFetch({ envelope: tenantContext,
-      expected_scope: expectedScope, broker: clients.credential_broker,
-      trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: tenantContext }),
-      read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey, now });
+    const createBrokerFetch = (context: TenantContextEnvelope): typeof fetch =>
+      createTenantCredentialFetch({ envelope: context,
+        expected_scope: expectedScope, broker: activeRuntimeClients.credential_broker,
+        trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: context }),
+        read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey, now });
+    let brokerFetchContext = activeTenantContext;
+    let activeBrokerFetch = createBrokerFetch(brokerFetchContext);
+    const brokerFetch: typeof fetch = async (input, init) => {
+      if (brokerFetchContext !== activeTenantContext) {
+        brokerFetchContext = activeTenantContext;
+        activeBrokerFetch = createBrokerFetch(brokerFetchContext);
+      }
+      return activeBrokerFetch(input, init);
+    };
     // The shared pipeline's cosmetic status/reaction requests are not part of
     // this single-effect authority. Only postReply below can send Slack writes.
     const credentialFetch: typeof fetch = async (input, init) => {
@@ -2487,7 +2523,7 @@ export async function executeCompanyAuthorityReplyOperation(
       let deliveryBodyHash: string | undefined;
       let authBotId: string | undefined;
       let deliveryAttempted = false;
-      let activeTenantBoundaryExpiresAt = tenantContext.expires_at;
+      let activeTenantBoundaryExpiresAt = activeTenantContext.expires_at;
       const result = await executeTenantRuntimeOperation({ tenant_context: tenantContext,
         expected_scope: expectedScope, verifier, quota: clients.quota, accounting: clients.accounting,
         ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
@@ -2495,10 +2531,30 @@ export async function executeCompanyAuthorityReplyOperation(
         process: async () => {
           const processed = await executeTenantContainerOperationWithRegistry({ namespace: env.TENANT_RUNTIME_STATE,
             tenant_context: tenantContext, expected_scope: expectedScope, verifier, now: now(),
+            // Claude's managed process and its blocking hooks can outlive the
+            // worker callback that observes completion. Keep the opaque handle
+            // until its refreshed expiry so late MCP/Brainbase calls fail by
+            // expiry rather than racing an eager dispose.
+            release: "on_expiration",
             company_authority_envelope: envelope,
             refresh: {
               issue: async () => {
-                const fresh = await reissueLongRunningTenantContext(env, tenantContext, expectedScope);
+                const fresh = await reissueLongRunningTenantContext(
+                  env,
+                  tenantContext,
+                  expectedScope,
+                  request.requested_action.desired_effect,
+                  {
+                    resource_ref: request.requested_action.resource_ref,
+                    ...(request.requested_action.project_hint
+                      ? { project_hint: request.requested_action.project_hint }
+                      : {}),
+                  },
+                );
+                activeTenantContext = fresh;
+                activeRuntimeClients = tenantRuntimeClients(env, fresh,
+                  config.desired_effect_by_capability);
+                tenantContextRefreshed = true;
                 activeTenantBoundaryExpiresAt = fresh.expires_at;
                 return fresh;
               },
@@ -2530,15 +2586,15 @@ export async function executeCompanyAuthorityReplyOperation(
                 const authResponse = await credentialFetch("https://slack.com/api/auth.test");
                 const auth = await authResponse.json() as { ok?: unknown; team_id?: unknown; bot_id?: unknown };
                 if (!authResponse.ok || auth.ok !== true
-                  || auth.team_id !== tenantContext.workspace_connection.workspace_id
+                  || auth.team_id !== activeTenantContext.workspace_connection.workspace_id
                   || typeof auth.bot_id !== "string" || !auth.bot_id) {
                   deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
                 }
                 authBotId = auth.bot_id;
                 const deliveryNow = now();
                 const ts = await boundary("slack_delivery", () => postTenantSlackReply({
-                  tenant_context: tenantContext, expected_scope: expectedScope,
-                  ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, tenantContext.tenant.tenant_id),
+                  tenant_context: activeTenantContext, expected_scope: expectedScope,
+                  ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, activeTenantContext.tenant.tenant_id),
                   read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey,
                   now: deliveryNow, retention_until: tenantRetentionUntil(deliveryNow),
                   event: replyEvent, text, effect_id: effectId, release_on_failure: false,
@@ -2552,10 +2608,10 @@ export async function executeCompanyAuthorityReplyOperation(
                 const bodyHash = `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
                 deliveryBodyHash = bodyHash;
                 const readback = await readSlackDeliveryReadback({ observed: { channel: replyEvent.channelId, ts },
-                  expected: { workspaceId: tenantContext.workspace_connection.workspace_id,
-                    appId: tenantContext.workspace_connection.app_id, botId: auth.bot_id },
+                  expected: { workspaceId: activeTenantContext.workspace_connection.workspace_id,
+                    appId: activeTenantContext.workspace_connection.app_id, botId: auth.bot_id },
                   threadTs: replyEvent.threadTs, bodyHash, window: { oldest: ts, latest: ts },
-                  expiresAt: Math.min(Date.now() + 30_000, Date.parse(tenantContext.expires_at)),
+                  expiresAt: Math.min(Date.now() + 30_000, Date.parse(activeTenantContext.expires_at)),
                 }, credentialFetch);
                 console.log(JSON.stringify({ event: "company_authority_slack_readback",
                   correlation_id: tenantContext.correlation_id, operation_id: tenantContext.operation_id,
@@ -2916,11 +2972,22 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       // Company Authority has already fixed both the canonical actor and the
       // exact project scope. Reuse the ordinary signed task-write capability so
       // the sandbox can mutate only that accepted placement and project.
+      // The Task API uses placement project codes, while Company Authority uses
+      // canonical project IDs. Issue the write capability from the configured
+      // placement so the broker can authorize the code sent in the Task body.
+      const taskWritePlacement = env.RUNTIME_PLACEMENTS_JSON
+        ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
+          .find((candidate) => candidate.placementId === placement.placementId)
+        : placement;
+      if (!taskWritePlacement || taskWritePlacement.channelId !== placement.channelId
+        || taskWritePlacement.projectCodes.length !== placement.projectCodes.length) {
+        throw new ReplyPipelineError("task_write_placement_scope_mismatch");
+      }
       const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
         event,
         env,
         Date.now(),
-        placement,
+        taskWritePlacement,
         requesterResolution.personId,
       );
       const graphContext = await hydrateGraphContext(event, canonicalProjectId, graphOptions);
@@ -3452,7 +3519,7 @@ export default {
               tenant_context: context, expected_scope: expectedScope, verifier, now: now(),
               refresh: { issue: () => reissueLongRunningTenantContext(env, context, expectedScope), now },
               execute: (tenantBoundaryHandle) => {
-                const resume = meetingMinutesClients(env, effects, context, tenantBoundaryHandle).resume;
+                const resume = meetingMinutesClients(env, effects, context, tenantBoundaryHandle, undefined, true).resume;
                 return runMeetingMinutesGenerationProbe(run, { contextMode: resume.contextMode,
                   download: resume.download, resolveContext: resume.resolveContext, generate: resume.generate });
               },
@@ -3545,11 +3612,11 @@ export default {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } | null;
+      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } | null;
       try {
         const parsed = await readAdminJsonRequest(request);
         payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } : null;
+          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } : null;
       } catch (error) {
         const rejected = adminJsonInputErrorResponse(error);
         if (rejected) return rejected;
@@ -3561,21 +3628,53 @@ export default {
         ? payload.workspaceId : undefined;
       const actionTs = typeof payload?.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
         ? payload.actionTs : undefined;
+      const outcomeCaseId = payload?.outcomeCaseId === undefined ? undefined
+        : typeof payload.outcomeCaseId === "string" && OUTCOME_CASE_ID_PATTERN.test(payload.outcomeCaseId)
+          ? payload.outcomeCaseId : null;
       if (!tenantId || !workspaceId || !actionTs) {
         return Response.json({ error: "meeting_minutes_admin_retry_scope_invalid" }, { status: 400 });
+      }
+      if (outcomeCaseId === null) {
+        return Response.json({ error: "meeting_minutes_admin_retry_outcome_case_invalid" }, { status: 400 });
       }
       const runId = authorizedRunReceiptRetryMatch[1]!;
       const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
         tenantId, workspaceId, runId,
       ));
       const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-      const run = await withDisposableResource(() => getWorkspace(handle),
-        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      const run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+        const saved = await loadMeetingMinutesRun(workspace.fs, runId);
+        if (!saved || outcomeCaseId === undefined || saved.outcomeCaseId === outcomeCaseId) return saved;
+        const savedAuthorization = saved.recoveryAuthorization;
+        if (!savedAuthorization || savedAuthorization.tenantId !== tenantId
+          || savedAuthorization.workspaceId !== workspaceId || !saved.destination || !saved.sourceAppId) {
+          return saved;
+        }
+        if (saved.runReceipt?.status === "delivered") return saved;
+        saved.outcomeCaseId = outcomeCaseId;
+        // A changed OutcomeCase changes the immutable receipt payload. Advance
+        // only the receipt identity; completed GitHub, Slack, generation and
+        // task checkpoints remain untouched and are never re-entered here.
+        saved.revision = (saved.revision ?? 0) + 1;
+        const correctedReceipt = await buildMeetingMinutesRunReceipt(saved);
+        if (!correctedReceipt) return saved;
+        saved.runReceipt = {
+          caseId: outcomeCaseId,
+          idempotencyKey: correctedReceipt.delivery.idempotency_key,
+          status: "pending",
+        };
+        saved.updatedAt = new Date().toISOString();
+        await saveMeetingMinutesRun(workspace.fs, saved);
+        return saved;
+      });
       if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
       const authorization = run.recoveryAuthorization;
       if (!authorization || authorization.tenantId !== tenantId ||
         authorization.workspaceId !== workspaceId || !run.destination || !run.sourceAppId) {
         return Response.json({ error: "meeting_minutes_admin_retry_not_authorized" }, { status: 409 });
+      }
+      if (outcomeCaseId !== undefined && run.runReceipt?.status === "delivered" && run.outcomeCaseId !== outcomeCaseId) {
+        return Response.json({ error: "meeting_minutes_outcome_case_receipt_delivered" }, { status: 409 });
       }
       if (run.runReceipt?.failure?.stage === "run_receipt" && run.runReceipt.failure.retryable === false
         && !isAdminReauthorizableRunReceiptFailure(run)) {

@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createTenantRuntimeHttpClients } from "../multitenancy/http-clients.js";
 import type { TenantContextEnvelope, WorkspaceConnectionSnapshot } from "../multitenancy/contracts.js";
 import { TenantBoundaryError } from "../multitenancy/errors.js";
+import {
+  resolveSlackWorkerIngress,
+  TenantRuntimeBoundaryVerifier,
+} from "../multitenancy/runtime-boundaries.js";
 import type { TenantContextIssueRequest } from "../multitenancy/runtime-boundaries.js";
 
 const tenantId = "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -149,6 +153,88 @@ function clientsWithResponse(
 }
 
 describe("Brainbase-owned company authority HTTP client", () => {
+  it("forwards the preserved authority binding through worker ingress refresh", async () => {
+    const captures: unknown[] = [];
+    const context = canonicalContext("company_authority_v1", "external_side_effect");
+    context.authorization.project_ids = ["prj_01KGHVCMA35JHSMXTSWQAS04PS"];
+    context.authorization.data_scopes = context.authorization.data_scopes.map((scope) => (
+      scope.startsWith("company_authority:resource:")
+        ? "company_authority:resource:project:mana#payload_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@12"
+        : scope
+    ));
+    const clients = clientsWithResponse(context, captures, { company_authority_v1: "external_side_effect" });
+    const validate = vi.spyOn(TenantRuntimeBoundaryVerifier.prototype, "validate")
+      .mockImplementation(async () => context);
+
+    try {
+      await expect(resolveSlackWorkerIngress({
+        identity: {
+          provider: "slack",
+          app_id: workspaceConnection.app_id,
+          workspace_id: workspaceConnection.workspace_id,
+          event_id: "Ev-company-authority-1",
+          channel_id: "C-backoffice",
+          thread_ts: "1.0",
+          requester_id: "U-UMEDA",
+        },
+        required_scopes: ["task.read"],
+        required_authorization: {
+          audience: "mana-runtime",
+          project_id: "prj_01KGHVCMA35JHSMXTSWQAS04PS",
+          capability_id: "company_authority_v1",
+        },
+        trusted_project_ids: ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
+        authority_resource_ref: "project:mana#payload_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        authority_project_hint: "mana",
+        tenant_revision: "7",
+        authority: clients.authority,
+        now: "2026-08-19T09:00:00Z",
+        resolve_verification_key: vi.fn(async () => undefined),
+      })).resolves.toMatchObject({ tenant_context: context });
+
+      expect((captures[0] as { requested_action: Record<string, unknown> }).requested_action)
+        .toMatchObject({
+          capability_id: "company_authority_v1",
+          project_hint: "mana",
+          resource_ref: "project:mana#payload_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          desired_effect: "external_side_effect",
+        });
+    } finally {
+      validate.mockRestore();
+    }
+  });
+
+  it("preserves an observed project alias and resource binding when refreshing canonical authority", async () => {
+    const captures: unknown[] = [];
+    const context = canonicalContext("company_authority_v1", "external_side_effect");
+    context.authorization.project_ids = ["prj_01KGHVCMA35JHSMXTSWQAS04PS"];
+    context.authorization.data_scopes = context.authorization.data_scopes.map((scope) => (
+      scope.startsWith("company_authority:resource:")
+        ? "company_authority:resource:project:mana@12"
+        : scope
+    ));
+    const clients = clientsWithResponse(context, captures, { company_authority_v1: "external_side_effect" });
+
+    await clients.authority.issue_tenant_context({
+      ...request(),
+      required_authorization: {
+        audience: "mana-runtime",
+        project_id: "prj_01KGHVCMA35JHSMXTSWQAS04PS",
+        capability_id: "company_authority_v1",
+      },
+      authority_resource_ref: "project:mana#payload_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      authority_project_hint: "mana",
+    });
+
+    expect((captures[0] as { requested_action: Record<string, unknown> }).requested_action)
+      .toMatchObject({
+        capability_id: "company_authority_v1",
+        project_hint: "mana",
+        resource_ref: "project:mana#payload_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        desired_effect: "external_side_effect",
+      });
+  });
+
   it("sends the placement trusted project set and rejects a signed set with extra projects", async () => {
     const captures: unknown[] = [];
     const context = canonicalContext();

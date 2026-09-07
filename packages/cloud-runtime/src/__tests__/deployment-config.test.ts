@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { assessTenantRuntimeDeploymentConfig } from "../../scripts/tenant-runtime-deploy-readiness.mjs";
+import { parseTaskBoardTargets } from "../task-board-targets.js";
 
 interface DeploymentConfig {
   account_id?: string;
@@ -66,7 +67,7 @@ describe("会社別Cloudflare deployment", () => {
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
   it("story-task-canvas-ownership:ac:5 enables auto-provision for every configured task-board target", () => {
-    const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
+    const targets = parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       targetId: string; organizationId: string; workspaceId: string; channelId: string; projectCodes: string[];
       enabled: boolean; autoProvision?: boolean; manaCanvasId: string | null; bindingRevision: number | null;
     }>;
@@ -77,15 +78,15 @@ describe("会社別Cloudflare deployment", () => {
         contextProjectCode: string; taskProjectCodes: string[]; taskBoardTargetId: string; slackChannelId: string }>,
     ];
     const minutesTargets = targets.filter((target) => target.targetId.startsWith("minutes-"));
-    expect(targets).toHaveLength(24);
-    expect(minutesTargets).toHaveLength(23);
+    expect(targets).toHaveLength(25);
+    expect(minutesTargets).toHaveLength(24);
     const autoProvisioned = targets.filter((target) => target.autoProvision);
     expect(autoProvisioned).toHaveLength(targets.length);
     expect(autoProvisioned.every((target) => target.enabled === true && (target.manaCanvasId ?? null) === null
       && target.bindingRevision === (target.targetId === "minutes-pms" ? 2 : 1))).toBe(true);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
-      .toEqual({ "unson-business": 9, unson: 4, "tech-knight": 10 });
+      .toEqual({ "unson-business": 9, unson: 4, "tech-knight": 11 });
     for (const destination of destinations) {
       const target = minutesTargets.find((candidate) => candidate.targetId === destination.taskBoardTargetId);
       expect(target).toEqual(expect.objectContaining({ channelId: destination.slackChannelId }));
@@ -112,6 +113,7 @@ describe("会社別Cloudflare deployment", () => {
       senpainurse: { context: "senpainurse", tasks: "senpainurse", board: "minutes-senpainurse" },
       "techknight-board": { context: "techknight", tasks: "proj_techknight_board", board: "minutes-techknight-board" },
       "techknight-executives": { context: "techknight", tasks: "proj_techknight_board", board: "minutes-techknight-executives" },
+      synctoys: { context: "techknight", tasks: "synctoys", board: "minutes-synctoys" },
       salestailor: { context: "salestailor", tasks: "salestailor", board: "minutes-salestailor" },
       baao: { context: "baao", tasks: "baao", board: "minutes-baao" },
       yakumokai: { context: "unson", tasks: "unson", board: "minutes-yakumokai" },
@@ -130,6 +132,7 @@ describe("会社別Cloudflare deployment", () => {
       "minutes-hp-sales": ["techknight-hotel-website-production"],
       "minutes-techknight-board": ["proj_techknight_board"],
       "minutes-techknight-executives": ["proj_techknight_board"],
+      "minutes-synctoys": ["synctoys"],
       "minutes-united": ["techknight-hotel-united-phase2-marketing", "proj_united"],
     });
     expect(targets.find((target) => target.targetId === "runtime-mana-dev-biz")).toMatchObject({
@@ -291,7 +294,7 @@ describe("会社別Cloudflare deployment", () => {
   });
 
   it("keeps every same-tenant task board target inside an enabled runtime placement", () => {
-    const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
+    const targets = parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       organizationId: string; workspaceId: string; channelId: string; projectCodes: string[]; enabled: boolean;
     }>;
     const placements = JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON) as Array<{
@@ -572,9 +575,11 @@ describe("会社別Cloudflare deployment", () => {
     const taskWritePolicy = JSON.parse(unson.vars.TASK_WRITE_POLICY_JSON) as {
       rules: Array<{ effect: string; placements: string[]; projects: string[] }>;
     };
+    // Task API writes use the project code carried by the placement. Canonical
+    // project IDs remain the authority scope and are mapped separately below.
     expect(taskWritePolicy.rules.find((rule) =>
       rule.effect === "auto" && rule.placements.includes("mana-dev-biz")
-    )?.projects).toEqual(["prj_01KGHVCMA35JHSMXTSWQAS04PS"]);
+    )?.projects).toEqual(["mana"]);
     expect(JSON.parse(unson.vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON)).toEqual({
       prj_01KGHVCMA35JHSMXTSWQAS04PS: "mana",
     });
@@ -600,7 +605,7 @@ describe("会社別Cloudflare deployment", () => {
       [item.organization.id, item.organization.name])).entries()]).toEqual([
       ["unson-business", "雲孫 事業運営"], ["tech-knight", "Tech Knight"], ["unson", "雲孫"],
     ]);
-    expect(destinations).toHaveLength(23);
+    expect(destinations).toHaveLength(24);
     expect(destinations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "back-office", projectId: "proj_back_office", slackChannelId: "C0BKS6RL99T",
         github: expect.objectContaining({ owner: "Unson-LLC", repo: "back_office", pathPrefix: "meetings/" }) }),
@@ -620,6 +625,12 @@ describe("会社別Cloudflare deployment", () => {
         organization: { id: "tech-knight", name: "Tech Knight" },
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project", branch: "main",
           pathPrefix: "meetings/executives/" } }),
+      expect.objectContaining({ id: "synctoys", projectId: "proj_synctoys", name: "SyncToys",
+        contextProjectCode: "techknight", taskProjectCodes: ["synctoys"],
+        taskBoardTargetId: "minutes-synctoys", slackChannelId: "C0BV97TH422",
+        organization: { id: "tech-knight", name: "Tech Knight" },
+        github: { owner: "Tech-Knight-inc", repo: "tech-knight-project", branch: "main",
+          pathPrefix: "meetings/synctoys/" } }),
       expect.objectContaining({ id: "aitel", projectId: "proj_aitel", name: "Aitel", slackChannelId: "C0A489A4EFJ",
         organization: { id: "tech-knight", name: "Tech Knight" },
         github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "smartfront", pathPrefix: "meetings/" }) }),
@@ -656,7 +667,7 @@ describe("会社別Cloudflare deployment", () => {
         organization: { id: "tech-knight", name: "Tech Knight" },
         github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "HotelUnitedGAS", pathPrefix: "meetings/" }) }),
     ]));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-kartz", channelId: "C0BQA5BGTEH", projectCodes: ["kartz"],
     }));
     expect(destinations).toContainEqual(expect.objectContaining({
@@ -665,20 +676,24 @@ describe("会社別Cloudflare deployment", () => {
       slackChannelId: "C0BKXCVSDCH",
       github: { owner: "Unson-LLC", repo: "Drive", branch: "main", pathPrefix: "meetings/unson-board/" },
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-unson-board", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
       channelId: "C0BKXCVSDCH", projectCodes: ["unson"],
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-legal-affairs", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
       channelId: "C0BKZ6CF3J8", projectCodes: ["unson"],
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-senpainurse", channelId: "C0A9J7UV1KL", projectCodes: ["senpainurse"],
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-techknight-executives", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
       channelId: "C08UXAH41U4", projectCodes: ["proj_techknight_board"],
+    }));
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+      targetId: "minutes-synctoys", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
+      channelId: "C0BV97TH422", projectCodes: ["synctoys"],
     }));
     expect(destinations).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "smartfront" }),
@@ -755,7 +770,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toMatch(
-      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*placement,\s*requesterResolution\.personId,\s*\)/,
+      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*taskWritePlacement,\s*requesterResolution\.personId,\s*\)/,
     );
     expect(worker).toContain("classifyMeetingMinutesDestinationInSandbox(");
     expect(worker).toContain("download: (fileId) => meetingClients.slack.downloadTextFile(fileId)");
@@ -829,7 +844,8 @@ describe("会社別Cloudflare deployment", () => {
       new URL("../../../../.github/workflows/retry-meeting-minutes-receipt.yml", import.meta.url)), "utf8");
     expect(receiptRetryWorkflow).toContain("name: 失敗済み議事録のRunReceiptを再送");
     expect(receiptRetryWorkflow).toContain("RunReceipt再送（Slack投稿等は再実行しない）");
-    expect(receiptRetryWorkflow).not.toContain("outcome_case_id:");
+    expect(receiptRetryWorkflow).toContain("outcome_case_id:");
+    expect(receiptRetryWorkflow).toContain("OUTCOME_CASE_ID: ${{ inputs.outcome_case_id }}");
     expect(receiptRetryWorkflow).toContain("/authorized-receipt-retry");
     expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_UNAVAILABLE");
     expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_REJECTED");
@@ -861,7 +877,7 @@ describe("会社別Cloudflare deployment", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toMatch(
-      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*placement,\s*requesterResolution\.personId,\s*\)/,
+      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*taskWritePlacement,\s*requesterResolution\.personId,\s*\)/,
     );
     expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch,");
     expect(worker).toContain("enqueueScheduledTaskBoardRepair(");

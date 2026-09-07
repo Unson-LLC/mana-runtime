@@ -6,7 +6,7 @@
     {
       "id": "C-001",
       "type": "contract",
-      "statement": "保存先の受付表示はmeeting_minutes_selectionコマンドのキュー受付成功後にだけ更新する",
+      "statement": "認可後の保存先表示はキュー受付前に選択済みと開始確認中を示し、生成開始や共有完了を意味しない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }],
         "code_refs": [{ "file": "packages/cloud-runtime/src/slack-interactions.ts" }],
@@ -18,7 +18,7 @@
     {
       "id": "C-002",
       "type": "contract",
-      "statement": "キュー受付後の表示は処理中であることを明記する",
+      "statement": "保存先選択後の表示は処理開始の確認中であることを明記する",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }],
         "code_refs": [{ "file": "packages/cloud-runtime/src/meeting-minutes-slack.ts" }],
@@ -49,6 +49,38 @@
         "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts", "case": "does not show processing when the queue rejects the selection" }]
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts", "must_cover": "does not show processing when the queue rejects the selection" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "保存先操作の全5経路でローカル検証後にHTTP受付と機密情報を含まない本人だけの受付表示を外部認可から独立して返す。詳細な表示・実処理は既存の認可を維持し、受付表示の遅延や失敗でも処理を止めない。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-routing-feedback.test.ts"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-routing-feedback.test.ts",
+            "must_cover": "intake"
+          }
+        ]
+      },
       "confidence": 0.99
     }
   ]

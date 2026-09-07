@@ -308,6 +308,20 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.exec).not.toHaveBeenCalled();
   });
 
+  it("preserves a managed process cancellation when Container cleanup also fails", async () => {
+    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    const cancellation = new Error("Canceled");
+    const startProcess = vi.fn().mockResolvedValue({
+      getStatus: vi.fn().mockRejectedValue(cancellation),
+      getLogs: vi.fn(),
+      kill: vi.fn().mockResolvedValue(undefined),
+    });
+    sandbox.destroy.mockRejectedValueOnce(new Error("runtime destroy detail"));
+    vi.mocked(options.createSandbox).mockReturnValue({ ...sandbox, startProcess });
+
+    await expect(generateClaudeReply(event(), options)).rejects.toBe(cancellation);
+  });
+
   it("uses the refreshed tenant boundary expiry when starting a long reply process", async () => {
     const nowMs = REPLY_START_MS + 240_000;
     const { options, sandbox } = harness({
@@ -819,8 +833,8 @@ describe("TechKnight Slack reply pipeline", () => {
     const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
       String(path).endsWith("mana-slack-prompt.txt"))?.[1] ?? "");
     expect(prompt).toContain("brainbase_resolve_turnを正確に1回だけ呼んでください");
-    expect(prompt).toContain("Hookが指定したturn_inputオブジェクト全体を変更せずturn_inputへコピーし");
-    expect(prompt).not.toContain("turn_ref");
+    expect(prompt).toContain("Hookが指定したturn_refをトップレベルのturn_refへそのまま渡し");
+    expect(prompt).toContain("turn_input、turn_input_path、会話本文、要約、再構築した参照値は渡さないでください");
     expect(prompt).toContain("成功後は同じturnでbrainbase_resolve_turnを再実行しないでください");
     expect(prompt).toContain("分類は単語一致ではなく依頼の意味で行ってください");
     expect(prompt).toContain("現在の実行時設定の所在");

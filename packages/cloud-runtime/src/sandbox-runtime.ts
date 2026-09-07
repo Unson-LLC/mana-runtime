@@ -90,9 +90,11 @@ async function authorizeTenantRuntimeProxy(
     now,
   );
   if (resolved instanceof Response) return resolved;
+  const host = new URL(request.url).hostname;
   if (resolved.company_authority_envelope !== undefined
-    && new URL(request.url).hostname !== BRAINBASE_MCP_PROXY_HOST
-    && !(new URL(request.url).hostname === RUNTIME_GATEWAY_PROXY_HOST
+    && host !== BRAINBASE_MCP_PROXY_HOST
+    && host !== TASK_WRITE_PROXY_HOST
+    && !(host === RUNTIME_GATEWAY_PROXY_HOST
       && await isPersonalKnowledgeGatewayRequest(request))) {
     return Response.json({ error: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN" }, { status: 403 });
   }

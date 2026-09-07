@@ -58,6 +58,12 @@ function isResolveTurnTool(payload) {
     || toolName === "mcp__brainbase__brainbase_resolve_turn";
 }
 
+function isBrainbaseTool(payload) {
+  const toolName = payload.tool_name ?? payload.toolName;
+  return typeof toolName === "string"
+    && (toolName.startsWith("mcp__brainbase__") || toolName.startsWith("brainbase_"));
+}
+
 function repairedStopAnswer(answer, auditLines) {
   const bodyLines = typeof answer === "string" ? answer.split(/\r?\n/) : [];
   const bodyWithoutAudit = bodyLines.filter((line) =>
@@ -613,6 +619,15 @@ try {
   payload.turn_id = await resolveTurnId(payload);
   if (payload.hook_event_name === "PreToolUse") {
     await requireResolveTurnFirst(payload);
+    process.exit(0);
+  }
+  if ((payload.hook_event_name === "PostToolUse"
+      || payload.hook_event_name === "PostToolUseFailure")
+      && !isBrainbaseTool(payload)) {
+    // The Claude matcher intentionally observes every tool so the first-tool
+    // gate cannot be bypassed. Brainbase's Host journal, however, accepts only
+    // Brainbase MCP lifecycle events. Do not forward unrelated tools and then
+    // require a Brainbase audit line that the Host cannot produce.
     process.exit(0);
   }
   await replayMissingLifecycleToolReceipts(payload);

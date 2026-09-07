@@ -5,6 +5,7 @@ const proxyMocks = vi.hoisted(() => ({
   gateway: vi.fn(),
   credentialFetchForResolvedContext: vi.fn(),
   createTaskSearchProxyHandler: vi.fn(),
+  createTaskWriteProxyHandler: vi.fn(),
   handleBrainbaseMcpProxyRequest: vi.fn(),
 }));
 
@@ -32,6 +33,11 @@ vi.mock("../task-search-proxy.js", async (importOriginal) => {
   return { ...actual, createTaskSearchProxyHandler: proxyMocks.createTaskSearchProxyHandler };
 });
 
+vi.mock("../task-write-proxy.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../task-write-proxy.js")>();
+  return { ...actual, createTaskWriteProxyHandler: proxyMocks.createTaskWriteProxyHandler };
+});
+
 vi.mock("../brainbase-mcp-proxy.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../brainbase-mcp-proxy.js")>();
   return { ...actual, handleBrainbaseMcpProxyRequest: proxyMocks.handleBrainbaseMcpProxyRequest };
@@ -48,6 +54,7 @@ import {
 } from "../sandbox-runtime.js";
 import { BRAINBASE_MCP_PROXY_HOST } from "../brainbase-mcp-proxy.js";
 import { TASK_SEARCH_PROXY_HOST } from "../task-search-proxy.js";
+import { TASK_WRITE_PROXY_HOST } from "../task-write-proxy.js";
 import {
   TENANT_BOUNDARY_HANDLE_HEADER,
   type AuthorizedTenantBoundaryContext,
@@ -94,11 +101,15 @@ describe("Company Authority sandbox proxy guard", () => {
     proxyMocks.resolve.mockReset();
     proxyMocks.credentialFetchForResolvedContext.mockReset();
     proxyMocks.createTaskSearchProxyHandler.mockReset();
+    proxyMocks.createTaskWriteProxyHandler.mockReset();
     proxyMocks.handleBrainbaseMcpProxyRequest.mockReset();
 
     proxyMocks.credentialFetchForResolvedContext.mockReturnValue(vi.fn());
     proxyMocks.createTaskSearchProxyHandler.mockReturnValue(
       vi.fn(async () => Response.json({ handled: "task-search" })),
+    );
+    proxyMocks.createTaskWriteProxyHandler.mockReturnValue(
+      vi.fn(async () => Response.json({ handled: "task-write" })),
     );
     proxyMocks.handleBrainbaseMcpProxyRequest.mockResolvedValue(
       Response.json({ handled: "brainbase-mcp" }),
@@ -162,6 +173,18 @@ describe("Company Authority sandbox proxy guard", () => {
         ],
       },
     );
+  });
+
+  it("keeps requester-scoped task writes available for an accepted Company Authority context", async () => {
+    proxyMocks.resolve.mockResolvedValue(resolvedWithCompanyAuthority);
+
+    const route = TechKnightSandbox.outboundByHost![TASK_WRITE_PROXY_HOST];
+    const response = await route(request(TASK_WRITE_PROXY_HOST), env(), outboundContext);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ handled: "task-write" });
+    expect(proxyMocks.credentialFetchForResolvedContext).toHaveBeenCalledTimes(1);
+    expect(proxyMocks.createTaskWriteProxyHandler).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the existing generic proxy path without a Company Authority envelope", async () => {

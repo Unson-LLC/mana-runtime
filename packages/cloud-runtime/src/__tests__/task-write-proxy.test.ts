@@ -149,6 +149,45 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(JSON.stringify(payload)).not.toContain(TASK_TOKEN);
   });
 
+  it("normalizes the Resolver canonical project id to the placement project code", async () => {
+    const upstreamTask = { ...task, project_codes: ["mana"] };
+    const upstream = vi.fn().mockResolvedValue(Response.json(upstreamTask));
+    const placements = JSON.stringify([
+      { placementId: "mana-dev-biz", channelId: "C_MANA", projectCodes: ["mana"], taskWriteEnabled: true },
+    ]);
+    const token = await capability({ placementId: "mana-dev-biz", projects: ["mana"] });
+    const policy = JSON.stringify({ version: "test-v2", rules: [{ effect: "auto", actors: ["U_REQUESTER"], placements: ["mana-dev-biz"], projects: ["mana"], operations: ["task.create"] }] });
+    const response = await createTaskWriteProxyHandler(upstream)(await request({
+      operation: "create",
+      project: "prj_01KGHVCMA35JHSMXTSWQAS04PS",
+      title: "Mana task",
+    }, token), env({
+      RUNTIME_PLACEMENTS_JSON: placements,
+      RUNTIME_AUTHORITY_PROJECT_IDS_JSON: JSON.stringify({ "mana-dev-biz": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"] }),
+      TASK_WRITE_POLICY_JSON: policy,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))).toMatchObject({ project_codes: ["mana"] });
+  });
+
+  it("rejects a canonical project id that is not bound to the capability placement", async () => {
+    const upstream = vi.fn();
+    const placements = JSON.stringify([
+      { placementId: "mana-dev-biz", channelId: "C_MANA", projectCodes: ["mana"], taskWriteEnabled: true },
+    ]);
+    const token = await capability({ placementId: "mana-dev-biz", projects: ["mana"] });
+    const response = await createTaskWriteProxyHandler(upstream)(await request({
+      operation: "create", project: "prj_OUTSIDE", title: "Denied",
+    }, token), env({
+      RUNTIME_PLACEMENTS_JSON: placements,
+      RUNTIME_AUTHORITY_PROJECT_IDS_JSON: JSON.stringify({ "mana-dev-biz": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"] }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("never publishes a raw tenant TaskBoard repair after a successful write", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);

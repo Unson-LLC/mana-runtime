@@ -4,9 +4,12 @@ import type { ExternalEffectReconciliationJob } from "../multitenancy/company-au
 
 const runtimeMocks = vi.hoisted(() => ({
   createClients: vi.fn(),
+  createClientsInputs: [] as Array<Record<string, unknown>>,
   createCredentialFetch: vi.fn(),
   trustedForwarder: vi.fn(),
   executeBoundary: vi.fn(),
+  executeTenantBoundary: vi.fn(),
+  resolveSlackWorkerIngress: vi.fn(),
   executeContainer: vi.fn(),
   executeTenantRuntimeOperation: vi.fn(),
   postTenantSlackReply: vi.fn(),
@@ -36,6 +39,8 @@ const runtimeMocks = vi.hoisted(() => ({
   },
   workspaceHandle: undefined as unknown,
   containerInputs: [] as Array<Record<string, unknown>>,
+  credentialFetchInputs: [] as Array<Record<string, unknown>>,
+  tenantBoundaryInputs: [] as Array<Record<string, unknown>>,
   replyInputs: [] as Array<Record<string, unknown>>,
   slackRequests: [] as Array<{ request: Request; body: Record<string, unknown> }>,
   readbackInputs: [] as Array<Record<string, unknown>>,
@@ -65,6 +70,14 @@ vi.mock("../multitenancy/http-clients.js", async (importOriginal) => {
 vi.mock("../multitenancy/company-authority-runtime-adapter.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../multitenancy/company-authority-runtime-adapter.js")>();
   return { ...actual, executeCompanyAuthorityRuntimeBoundary: runtimeMocks.executeBoundary };
+});
+vi.mock("../multitenancy/runtime-boundaries.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../multitenancy/runtime-boundaries.js")>();
+  return {
+    ...actual,
+    executeTenantBoundary: runtimeMocks.executeTenantBoundary,
+    resolveSlackWorkerIngress: runtimeMocks.resolveSlackWorkerIngress,
+  };
 });
 vi.mock("../multitenancy/tenant-container-operation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../multitenancy/tenant-container-operation.js")>();
@@ -132,6 +145,7 @@ import {
   executeCompanyAuthorityReplyOperation,
   handleExternalEffectReconciliationQueueMessage,
 } from "../index.js";
+import { verifyTaskWriteCapability } from "@openryoko/write-broker";
 
 type CompanyAuthorityReplyOperation = Parameters<typeof executeCompanyAuthorityReplyOperation>[1];
 type RuntimeEnv = Parameters<typeof executeCompanyAuthorityReplyOperation>[0];
@@ -144,7 +158,7 @@ const appId = "A_UNSON";
 const channelId = "C_ROUTER";
 const userId = "U123";
 const personId = "person-accepted";
-const projectId = "project-1";
+const projectId = "prj_01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const threadTs = "1786420000.000001";
 const responseTs = "1786420000.000451";
 
@@ -426,7 +440,10 @@ async function brokerFetch(input: RequestInfo | URL, init?: RequestInit): Promis
 describe("Company Authority runtime.execute reply executor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeMocks.createClientsInputs.length = 0;
     runtimeMocks.containerInputs.length = 0;
+    runtimeMocks.credentialFetchInputs.length = 0;
+    runtimeMocks.tenantBoundaryInputs.length = 0;
     runtimeMocks.replyInputs.length = 0;
     runtimeMocks.slackRequests.length = 0;
     runtimeMocks.readbackInputs.length = 0;
@@ -449,15 +466,21 @@ describe("Company Authority runtime.execute reply executor", () => {
     runtimeMocks.getSandbox.mockReturnValue({});
     runtimeMocks.withDisposableResource.mockImplementation(async (_acquire, use) =>
       use(runtimeMocks.workspaceHandle));
-    runtimeMocks.createClients.mockReturnValue({
-      authority: { read_workspace_connection: vi.fn().mockResolvedValue(snapshot) },
-      company_authority: {},
-      credential_broker: {},
-      quota: {},
-      accounting: {},
-      workspace_connections: {},
+    runtimeMocks.createClients.mockImplementation((input: Record<string, unknown>) => {
+      runtimeMocks.createClientsInputs.push(input);
+      return {
+        authority: { read_workspace_connection: vi.fn().mockResolvedValue(snapshot) },
+        company_authority: {},
+        credential_broker: {},
+        quota: {},
+        accounting: {},
+        workspace_connections: {},
+      };
     });
-    runtimeMocks.createCredentialFetch.mockReturnValue(runtimeMocks.brokerFetch);
+    runtimeMocks.createCredentialFetch.mockImplementation((input: Record<string, unknown>) => {
+      runtimeMocks.credentialFetchInputs.push(input);
+      return runtimeMocks.brokerFetch;
+    });
     runtimeMocks.trustedForwarder.mockReturnValue({ forward: vi.fn() });
     runtimeMocks.brokerFetch.mockImplementation(brokerFetch);
     runtimeMocks.createAccountingClient.mockReturnValue({});
@@ -467,6 +490,14 @@ describe("Company Authority runtime.execute reply executor", () => {
     runtimeMocks.executeBoundary.mockImplementation(async (input: { execute_auto: () => Promise<unknown> }) => ({
       result: await input.execute_auto(),
     }));
+    runtimeMocks.executeTenantBoundary.mockImplementation(async (input: {
+      boundary: string;
+      tenant_context: Record<string, unknown>;
+      execute: () => Promise<unknown>;
+    }) => {
+      runtimeMocks.tenantBoundaryInputs.push(input);
+      return input.execute();
+    });
     runtimeMocks.executeContainer.mockImplementation(async (input: Record<string, unknown>) => {
       runtimeMocks.containerInputs.push(input);
       return (input.execute as (handle: string) => Promise<unknown>)("tenant-boundary-handle");
@@ -538,6 +569,7 @@ describe("Company Authority runtime.execute reply executor", () => {
     });
 
     expect(runtimeMocks.containerInputs).toHaveLength(1);
+    expect(runtimeMocks.containerInputs[0]).toMatchObject({ release: "on_expiration" });
     expect(runtimeMocks.containerInputs[0]?.company_authority_envelope)
       .toEqual(candidate.company_authority_envelope);
     expect(runtimeMocks.replyInputs).toHaveLength(1);
@@ -588,6 +620,74 @@ describe("Company Authority runtime.execute reply executor", () => {
     expect(runtimeMocks.readbackInputs[0]?.observed).toEqual({ channel: channelId, ts: responseTs });
     expect(runtimeMocks.readbackInputs[0]?.bodyHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
     expect(runtimeMocks.workspaceStub.completeRuntimeEvent).toHaveBeenCalledOnce();
+  });
+
+  it("uses the refreshed tenant context for broker, Slack delivery, and readback", async () => {
+    const candidate = operation();
+    const refreshedExpiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const refreshedContext = structuredClone(candidate.tenant_context);
+    refreshedContext.expires_at = refreshedExpiresAt;
+    refreshedContext.integrity.value = "fresh-signed-tenant-context";
+    runtimeMocks.resolveSlackWorkerIngress.mockResolvedValue({
+      tenant_context: refreshedContext,
+      authoritative_snapshot: snapshot,
+    });
+    runtimeMocks.executeContainer.mockImplementationOnce(async (input: Record<string, unknown>) => {
+      runtimeMocks.containerInputs.push(input);
+      await (input.refresh as { issue(): Promise<unknown> }).issue();
+      return (input.execute as (handle: string) => Promise<unknown>)("tenant-boundary-handle");
+    });
+
+    await expect(executeCompanyAuthorityReplyOperation(runtimeEnv(), candidate)).resolves.toEqual({
+      applied: true,
+      response_observed: true,
+      result_ref: `slack:${channelId}:${responseTs}`,
+    });
+
+    expect(runtimeMocks.createCredentialFetch).toHaveBeenCalledTimes(2);
+    expect(runtimeMocks.createClientsInputs.map((input) => input.tenant_context)).toEqual([
+      candidate.tenant_context,
+      undefined,
+      refreshedContext,
+    ]);
+    expect(runtimeMocks.credentialFetchInputs.map((input) => input.envelope)).toEqual([
+      candidate.tenant_context,
+      refreshedContext,
+    ]);
+    expect(runtimeMocks.tenantBoundaryInputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ boundary: "brainbase_proxy", tenant_context: refreshedContext }),
+      expect.objectContaining({ boundary: "slack_delivery", tenant_context: refreshedContext }),
+    ]));
+    expect(runtimeMocks.postTenantSlackReply.mock.calls[0]?.[0]).toMatchObject({
+      tenant_context: refreshedContext,
+    });
+    expect(runtimeMocks.readbackInputs[0]?.expiresAt).toBeGreaterThan(
+      Date.parse(candidate.tenant_context.expires_at),
+    );
+    expect(runtimeMocks.readbackInputs[0]?.expiresAt).toBeLessThanOrEqual(
+      Date.parse(refreshedContext.expires_at),
+    );
+  });
+
+  it("keeps the Task API project code in the write capability when authority uses a canonical ID", async () => {
+    const env = runtimeEnv();
+    const placements = JSON.parse(env.RUNTIME_PLACEMENTS_JSON!);
+    placements[0].projectCodes = ["mana"];
+    env.RUNTIME_PLACEMENTS_JSON = JSON.stringify(placements);
+    env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON = JSON.stringify({ tasks: [projectId] });
+
+    await executeCompanyAuthorityReplyOperation(env, operation());
+
+    const token = runtimeMocks.preparedRequesters[0]?.taskWriteCapability as string;
+    const claims = await verifyTaskWriteCapability(token, env.TASK_WRITE_CAPABILITY_SECRET!, {
+      requestId: "EvCompanyAuthorityReply",
+      workspace: workspaceId,
+      placementId: "tasks",
+    });
+    expect(claims.projects).toEqual(["mana"]);
+    expect(runtimeMocks.replyInputs[0]?.options).toMatchObject({
+      brainbaseProjectCode: projectId,
+    });
   });
 
   it("keeps an unknown readback unresolved and does not resend an existing claim", async () => {

@@ -224,9 +224,22 @@ describe("tenant Slack runtime wiring", () => {
     const selection = source.slice(selectionStart, selectionEnd);
 
     expect(clients).toContain("refreshAuthorization:");
-    expect(clients).toContain("reissueLongRunningTenantContext(env, tenantContext, expectedScope)");
+    expect(clients).toContain("reissueLongRunningTenantContext(env, tenantContext, refresh.expectedScope)");
     expect(clients).toContain("tenant_context: fresh");
     expect(selection).toContain("expectedScope, verifier, now");
+  });
+
+  it("reissues Company Authority replies with the signed desired effect", () => {
+    const replyStart = source.indexOf("export async function executeCompanyAuthorityReplyOperation(");
+    const replyEnd = source.indexOf("\nasync function processTenantMeetingMinutesSelection", replyStart);
+    const reply = source.slice(replyStart, replyEnd);
+
+    expect(reply).toContain("request.requested_action.desired_effect");
+    expect(reply).toContain("resource_ref: request.requested_action.resource_ref");
+    expect(reply).toContain("project_hint: request.requested_action.project_hint");
+    expect(source).toContain("[expectedScope.capability_id]: authorizationDesiredEffect");
+    expect(source).toContain("capability_id: expectedScope.capability_id");
+    expect(reply).toContain("reissueLongRunningTenantContext(");
   });
 
   it("turns only classified run-receipt failures into stable Brainbase boundary codes", () => {

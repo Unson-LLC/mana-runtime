@@ -3,7 +3,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
   type MeetingMinutesRedo, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
-import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
+import { destinationSelectedMessage, interactionPendingMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
   interactionEnqueueFailedMessage, redoFailedMessage, redoProcessingMessage,
   selectionConfirmationFailedMessage, statusProjectionFailedMessage, threadCoordinateMissingMessage,
   tenantInteractionFailedMessage, interactionActionFailedMessage, MeetingMinutesSlackClient,
@@ -41,6 +41,8 @@ interface InteractionOptions {
   updateOriginal?(responseUrl: string, message: SlackInteractionMessage, credentialFetch: typeof fetch): Promise<void>;
   updateBeforeTenant?(responseUrl: string, message: SlackInteractionMessage): Promise<void>;
   defer?(work: Promise<void>): void;
+  /** Worker HTTP acknowledgement must not wait for remote tenant authority. */
+  acknowledgeBeforeTenant?: boolean;
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string },
     effects: TenantInteractionEffects): Promise<Response>;
   handleMeetingTaskAction?(payload: Record<string, unknown>, effects: TenantInteractionEffects): Promise<Response | undefined>;
@@ -301,6 +303,7 @@ async function interactionActionFailureResponse(input: {
   threadTs: string;
   effects: TenantInteractionEffects;
   options: InteractionOptions;
+  ephemeral?: boolean;
 }): Promise<Response> {
   const runId = string(input.actionValue?.runId) ?? input.interactionId;
   const fileName = string(input.actionValue?.fileName) ?? "議事録";
@@ -314,7 +317,9 @@ async function interactionActionFailureResponse(input: {
     effect: { kind: "interaction_action_failed", action: input.action, runId },
     responseUrl,
     runId,
-    message: interactionActionFailedMessage(runId, fileName, failure),
+    message: input.ephemeral
+      ? ephemeralRedoMessage(interactionActionFailedMessage(runId, fileName, failure))
+      : interactionActionFailedMessage(runId, fileName, failure),
     options: input.options,
     failureEvent: "meeting_minutes_interaction_action_failure_projection_failed",
   });
@@ -380,11 +385,12 @@ export function handleMeetingMinutesInteractionEntrypoint(
     updateOriginal: (responseUrl, message, credentialFetch) => updateSlackInteractionMessage(
       responseUrl, message, credentialFetch),
     updateBeforeTenant: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
-    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction,
+    defer: (work) => ctx.waitUntil(work), acknowledgeBeforeTenant: true, approveTaskWrite, handleMeetingTaskAction,
     resolveTenantEffects, isIntakePaused, handleContractLedgerAction });
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
+  const receivedAt = Date.now();
   let body: string;
   try {
     body = await readSlackRequestBody(request);
@@ -451,6 +457,13 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     ?? string(actionValue?.sourceThreadTs) ?? string(sourceMessage?.ts) ?? string(action?.action_ts)
     ?? `interaction:${interactionId.slice("slack-interaction-".length)}`;
   const destinationAction = isMeetingMinutesDestinationAction(actionId);
+  const organizationAction = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`) === true;
+  const backAction = actionId === MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID;
+  const redoAction = actionId === MEETING_MINUTES_REDO_ACTION_ID;
+  const confirmRedoAction = actionId === MEETING_MINUTES_CONFIRM_REDO_ACTION_ID;
+  const actionOrganizationId = organizationAction
+    ? actionId?.slice(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`.length)
+    : undefined;
   const userId = string(user?.id);
   let destinations: readonly MeetingMinutesDestination[] | undefined;
   let destinationResolutionFailed = false;
@@ -466,7 +479,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     (enterpriseId !== undefined && !slackIdPattern.test(enterpriseId)) || !threadIdentityValid) {
     return response("slack_interaction_invalid", 400);
   }
-  if (destinationAction && (!userId || !options.operatorUserIds.has(userId))) {
+  if (isMeetingMinutesInteractionAction(actionId) && (!userId || !options.operatorUserIds.has(userId))) {
     return response("meeting_minutes_operator_forbidden", 403);
   }
   if (destinationAction) {
@@ -483,7 +496,21 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       destinationResolutionFailed = true;
     }
   }
+  // Resolve the local destination catalog before projecting navigation feedback
+  // so malformed or stale organization buttons do not overwrite the selector.
+  if (organizationAction || backAction) {
+    try { destinations = options.destinations ?? destinations ?? options.resolveDestinations?.(); }
+    catch { return response("slack_interaction_invalid", 400); }
+    if (!destinations || (organizationAction &&
+      (actionOrganizationId !== string(actionValue?.organizationId) ||
+        !destinations.some((item) => item.organization.id === string(actionValue?.organizationId))))) {
+      return response("slack_interaction_invalid", 400);
+    }
+  }
+
+  const continueInteraction = async (): Promise<Response> => {
   let tenantEffects: TenantInteractionEffects;
+  const tenantStartedAt = Date.now();
   try {
     const tenantIdentity: TenantInteractionIdentity = {
       app_id: appId,
@@ -497,6 +524,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     tenantEffects = selectedDestination
       ? await options.resolveTenantEffects(tenantIdentity, selectedDestination)
       : await options.resolveTenantEffects(tenantIdentity);
+    if (isMeetingMinutesInteractionAction(actionId)) {
+      console.info(JSON.stringify({ event: "meeting_minutes_interaction_tenant_resolved", interactionId,
+        actionId, runId: string(actionValue?.runId), channel_id: interactionChannelId,
+        elapsed_ms: Date.now() - receivedAt, tenant_resolution_ms: Date.now() - tenantStartedAt }));
+    }
   } catch (error) {
     const responseUrl = slackResponseUrl(payload?.response_url);
     const runId = string(actionValue?.runId) ?? interactionId;
@@ -522,8 +554,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }));
     if (responseUrl && options.updateBeforeTenant && isMeetingMinutesInteractionAction(actionId) &&
       isTenantFailureResponseUrlEligible(error)) {
+      const tenantFailureMessage = tenantInteractionFailedMessage(
+        runId, string(actionValue?.fileName) ?? "議事録", failure);
       const notice = options.updateBeforeTenant(responseUrl,
-        tenantInteractionFailedMessage(runId, string(actionValue?.fileName) ?? "議事録", failure)).catch(() => {
+        redoAction || confirmRedoAction ? ephemeralRedoMessage(tenantFailureMessage) : tenantFailureMessage).catch(() => {
           console.error(JSON.stringify({ event: "meeting_minutes_tenant_failure_projection_failed", runId,
             stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
             correlation_id: deriveCorrelationId(runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
@@ -532,6 +566,64 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
     return Response.json({ error: failure.code, message_key: failure.message_key,
       next_actions: failure.next_actions, correlation_id: failure.correlation_id }, { status: 503 });
+  }
+  const value = actionValue;
+  const runId = string(value?.runId);
+  const destinationId = string(value?.destinationId);
+  const organizationId = string(value?.organizationId);
+  const fileName = string(value?.fileName);
+  const revision = typeof value?.revision === "number" ? value.revision : 0;
+  const sourceThreadTs = threadTsCandidates[0];
+
+  // Project one fast, route-specific acknowledgement after tenant authority is
+  // established and before the slower intake/queue work. The outer handler
+  // keeps this await inside waitUntil, so Slack receives HTTP 200 immediately.
+  const responseUrl = slackResponseUrl(payload?.response_url);
+  const pendingRunId = runId ?? interactionId;
+  const pendingFileName = fileName ?? "議事録";
+  const pendingEligible = organizationAction || backAction
+    ? !!runId && !!fileName && !!responseUrl && !!options.updateOriginal && !!options.defer && !!destinations &&
+      (!organizationAction || destinations.some((item) => item.organization.id === organizationId))
+    : redoAction
+    ? !!runId && !!fileName && !!responseUrl && !!options.updateOriginal && !!options.defer
+    : confirmRedoAction
+    ? !!runId && !!fileName && !!string(channel?.id) && !!sourceThreadTs && !!actionTs && !!responseUrl &&
+      !!options.updateOriginal && !!options.defer
+    : destinationAction
+    ? !!runId && !!destinationId && !!string(channel?.id) && !!actionTs && !!options.defer && !!selectedDestination
+    : false;
+  const pendingMessage = !pendingEligible ? undefined : organizationAction
+    ? interactionPendingMessage(pendingFileName, "プロジェクト一覧を開いています")
+    : backAction
+    ? interactionPendingMessage(pendingFileName, "ワークスペース一覧を開いています")
+    : redoAction
+    ? ephemeralRedoMessage(interactionPendingMessage(pendingFileName, "保存先のやり直しを確認しています"))
+    : confirmRedoAction
+    ? ephemeralRedoMessage(interactionPendingMessage(pendingFileName, "やり直しの開始を確認しています"))
+    : destinationAction && selectedDestination
+    ? destinationSelectedMessage(pendingRunId, pendingFileName, selectedDestination)
+    : undefined;
+  let destinationPendingProjectionFailed = false;
+  if (responseUrl && options.updateOriginal && pendingMessage) {
+    const pendingKind = organizationAction ? "project_selection_pending"
+      : backAction ? "organization_selection_pending"
+      : redoAction ? "redo_confirmation_pending"
+      : confirmRedoAction ? "redo_processing_pending"
+      : "destination_confirmation";
+    try {
+      await guardedSlackEffect(tenantEffects, `${pendingKind}:${pendingRunId}:${revision}`,
+        target(interactionChannelId, destinationAction ? sourceThreadTs ?? interactionThreadTs : sourceThreadTs),
+        { kind: pendingKind, runId: pendingRunId, ...(selectedDestination ? { destinationId: selectedDestination.id } : {}) },
+        (credentialFetch) => options.updateOriginal!(responseUrl, pendingMessage, credentialFetch));
+    } catch {
+      if (destinationAction) destinationPendingProjectionFailed = true;
+      const failureCode = destinationAction ? "SELECTION_CONFIRMATION_FAILED" : "STATUS_PROJECTION_FAILED";
+      console.error(JSON.stringify({
+        event: destinationAction ? "meeting_minutes_selection_confirmation_failed" : "meeting_minutes_pending_projection_failed",
+        runId: pendingRunId, stage: "status_projection", code: failureCode,
+        correlation_id: deriveCorrelationId(pendingRunId, "status_projection", failureCode), retryable: true,
+      }));
+    }
   }
   if (options.handleMeetingTaskAction) {
     try {
@@ -566,18 +658,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
-  const organizationAction = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`);
-  const backAction = actionId === MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID;
-  const redoAction = actionId === MEETING_MINUTES_REDO_ACTION_ID;
-  const confirmRedoAction = actionId === MEETING_MINUTES_CONFIRM_REDO_ACTION_ID;
   if (!destinationAction && !organizationAction && !backAction && !redoAction && !confirmRedoAction) {
     return response("slack_interaction_invalid", 400);
   }
-  const value = actionValue;
-  const runId = string(value?.runId); const destinationId = string(value?.destinationId);
-  const organizationId = string(value?.organizationId); const fileName = string(value?.fileName);
-  const revision = typeof value?.revision === "number" ? value.revision : 0;
-  const sourceThreadTs = threadTsCandidates[0];
   let intakePaused = false;
   if (options.isIntakePaused) {
     try {
@@ -585,23 +668,26 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     } catch (error) {
       return interactionActionFailureResponse({ action: "intake_gate", error, interactionId,
         payload: payload!, actionValue, channelId: interactionChannelId, threadTs: interactionThreadTs,
-        effects: tenantEffects, options });
+        effects: tenantEffects, options, ephemeral: redoAction || confirmRedoAction });
     }
   }
   if (intakePaused) {
     const responseUrl = slackResponseUrl(payload?.response_url);
     const intakeCorrelationId = deriveCorrelationId(runId ?? interactionId, "intake", "INTAKE_PAUSED");
     if (responseUrl && options.updateOriginal && options.defer) {
+      const intakePausedMessage: SlackSelectionMessage = {
+        replace_original: true,
+        text: `議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。問い合わせID: ${intakeCorrelationId}`,
+        blocks: [{ type: "section", text: { type: "mrkdwn",
+          text: `:warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。\n問い合わせID: ${intakeCorrelationId}` } }],
+      };
+      const publicIntakePausedMessage = redoAction || confirmRedoAction
+        ? ephemeralRedoMessage(intakePausedMessage) : intakePausedMessage;
       options.defer((async () => {
         try {
           await guardedSlackEffect(tenantEffects, `intake-paused:${interactionId}`,
             target(channelId, sourceThreadTs), { kind: "intake_paused" },
-            (credentialFetch) => options.updateOriginal!(responseUrl, {
-              replace_original: true,
-              text: `議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。問い合わせID: ${intakeCorrelationId}`,
-              blocks: [{ type: "section", text: { type: "mrkdwn",
-                text: `:warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。\n問い合わせID: ${intakeCorrelationId}` } }],
-            }, credentialFetch));
+            (credentialFetch) => options.updateOriginal!(responseUrl, publicIntakePausedMessage, credentialFetch));
         } catch {
           await attemptInteractionFailureProjection({
             effects: tenantEffects,
@@ -610,7 +696,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
             effect: { kind: "intake_paused_projection_fallback", interactionId },
             responseUrl,
             runId: runId ?? interactionId,
-            message: statusProjectionFailedMessage(runId ?? interactionId, fileName ?? "議事録"),
+            message: redoAction || confirmRedoAction
+              ? ephemeralRedoMessage(statusProjectionFailedMessage(runId ?? interactionId, fileName ?? "議事録"))
+              : statusProjectionFailedMessage(runId ?? interactionId, fileName ?? "議事録"),
             options,
             failureEvent: "meeting_minutes_intake_paused_projection_failed",
           });
@@ -621,7 +709,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   }
   if (destinationAction) {
     if (destinationResolutionFailed) return response("slack_interaction_invalid", 400);
-  } else {
+  } else if (!destinations) {
     try { destinations = options.destinations ?? options.resolveDestinations?.(); }
     catch { return response("slack_interaction_invalid", 400); }
   }
@@ -717,9 +805,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   }
   if ((organizationAction || backAction)) {
     const responseUrl = slackResponseUrl(payload?.response_url);
-    const actionOrganizationId = organizationAction
-      ? actionId?.slice(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`.length)
-      : undefined;
     if (!runId || !fileName || !responseUrl || !options.updateOriginal || !options.defer || !destinations ||
       (organizationAction && actionOrganizationId !== organizationId)) {
       return response("slack_interaction_invalid", 400);
@@ -765,6 +850,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   options.defer((async () => {
     const responseUrl = slackResponseUrl(payload?.response_url);
     let feedbackThreadTs: string | undefined = sourceThreadTs;
+    // The durable destination acknowledgement is projected above, before the
+    // intake gate. Keep its failure for the single bounded fallback below.
+    let selectionConfirmationFailed = destinationPendingProjectionFailed;
     if (!feedbackThreadTs && options.resolveThreadTs) {
       try {
         feedbackThreadTs = await tenantEffects.durableObject(
@@ -793,23 +881,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         failureEvent: "meeting_minutes_thread_coordinate_failure_projection_failed",
       });
       return;
-    }
-    // Project a durable acknowledgement before queueing. Queue delivery can be
-    // slow or unavailable; the operator must still see that Slack accepted the
-    // click immediately and the selector must no longer invite duplicate clicks.
-    let selectionConfirmationFailed = false;
-    if (responseUrl && options.updateOriginal && destination) {
-      try {
-        await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
-          target(channelId, feedbackThreadTs), { kind: "destination_confirmation", runId, destinationId: destination.id },
-          (credentialFetch) => options.updateOriginal!(
-            responseUrl, destinationSelectedMessage(runId, fileName ?? "議事録", destination), credentialFetch));
-      } catch {
-        selectionConfirmationFailed = true;
-        console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
-          stage: "status_projection", code: "SELECTION_CONFIRMATION_FAILED",
-          correlation_id: deriveCorrelationId(runId, "status_projection", "SELECTION_CONFIRMATION_FAILED"), retryable: true }));
-      }
     }
     let immediateStatusFailed = false;
     if (options.showProcessing && destination) {
@@ -879,4 +950,51 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
   })());
   return Response.json({ ok: true });
+  };
+  if (options.acknowledgeBeforeTenant && options.defer && isMeetingMinutesInteractionAction(actionId)) {
+    const defer = options.defer;
+    const pending: Promise<void>[] = [];
+    // Keep nested projections and queue work in the same waitUntil lifetime.
+    options = { ...options, defer: (work) => { pending.push(work); } };
+    // This is only a receipt to the person who clicked a signed, locally
+    // validated button. It carries no tenant/catalog/run data and never changes
+    // the shared message. Detailed projections and all work still require the
+    // tenant boundary below. Keep this independent of authority and queue waits.
+    const receiptUrl = slackResponseUrl(payload?.response_url);
+    const projectReceipt = options.updateBeforeTenant;
+    if (receiptUrl && projectReceipt && (!destinationAction || selectedDestination)) {
+      const text = "操作を受け付けました。確認しています。";
+      const receipt: SlackInteractionMessage = { replace_original: false, response_type: "ephemeral", text,
+        blocks: [{ type: "section", text: { type: "plain_text", text } }] };
+      pending.push(Promise.resolve().then(() => projectReceipt(receiptUrl, receipt)).then(() => {
+        console.info(JSON.stringify({ event: "meeting_minutes_interaction_receipt_delivered", interactionId,
+          actionId, runId: string(actionValue?.runId), channel_id: interactionChannelId,
+          elapsed_ms: Date.now() - receivedAt }));
+      }).catch(() => {
+        console.error(JSON.stringify({ event: "meeting_minutes_interaction_receipt_failed", interactionId,
+          actionId, elapsed_ms: Date.now() - receivedAt, code: "STATUS_PROJECTION_FAILED" }));
+      }));
+    }
+    defer((async () => {
+      try {
+        const result = await continueInteraction();
+        if (!result.ok) {
+          console.warn(JSON.stringify({ event: "meeting_minutes_deferred_interaction_rejected",
+            interactionId, status: result.status }));
+        }
+      } catch {
+        console.error(JSON.stringify({ event: "meeting_minutes_deferred_interaction_failed", interactionId }));
+      } finally {
+        while (pending.length) {
+          const results = await Promise.allSettled(pending.splice(0));
+          if (results.some((result) => result.status === "rejected")) {
+            console.error(JSON.stringify({ event: "meeting_minutes_deferred_interaction_failed", interactionId }));
+          }
+        }
+      }
+    })());
+    return new Response(null, { status: 200 });
+  }
+  return continueInteraction();
+
 }

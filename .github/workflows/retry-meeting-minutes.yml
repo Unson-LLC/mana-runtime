@@ -183,6 +183,8 @@ jobs:
                   exitCode: (.diagnostics.generation.exitCode | number_or_null),
                   outcome: (.diagnostics.generation.outcome | one_of(["success","timeout","nonzero_exit","transport_failure"])),
                   stderrCode: (.diagnostics.generation.stderrCode | one_of(["TIMEOUT","RATE_LIMITED","AUTHENTICATION_FAILED","HOOK_FAILED","CLI_ERROR","UNKNOWN"])),
+                  stdoutErrorCode: (.diagnostics.generation.stdoutErrorCode | one_of(["PROVIDER_STATUS","AUTHENTICATION_FAILED","RATE_LIMITED","MODEL_ERROR","BOUNDARY_ERROR","CLI_ERROR","HOOK_FAILED","MAX_TURNS","MAX_BUDGET","STRUCTURED_OUTPUT","EXECUTION_ERROR","UNKNOWN"])),
+                  stdoutStatusCode: (.diagnostics.generation.stdoutStatusCode | one_of([400,401,403,429,500,502,503,504])),
                   stdoutBytes: (.diagnostics.generation.stdoutBytes | number_or_null),
                   streamEventCount: (.diagnostics.generation.streamEventCount | number_or_null),
                   progress: (.diagnostics.generation.progress | {

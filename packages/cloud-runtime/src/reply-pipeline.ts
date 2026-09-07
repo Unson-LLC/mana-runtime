@@ -314,7 +314,7 @@ function buildPrompt(
     .slice(0, 100_000);
   return [
     ...(brainbaseProjectCode ? [
-      "最優先: UserPromptSubmit Hookの追加文脈を読み、Hookが指定したturn_inputオブジェクト全体を変更せずturn_inputへコピーし、あなた自身の意味分類だけをmodel_interpretationに追加してbrainbase_resolve_turnを正確に1回だけ呼んでください。turn_inputを参照値・要約・再構築した値へ置き換えてはいけません。このtool callが成功するまで、他のtool呼び出し・調査・回答作成を始めてはいけません。成功後は同じturnでbrainbase_resolve_turnを再実行しないでください。",
+      "最優先: UserPromptSubmit Hookの追加文脈を読み、Hookが指定したturn_refをトップレベルのturn_refへそのまま渡し、あなた自身の意味分類だけをmodel_interpretationに追加してbrainbase_resolve_turnを正確に1回だけ呼んでください。turn_input、turn_input_path、会話本文、要約、再構築した参照値は渡さないでください。このtool callが成功するまで、他のtool呼び出し・調査・回答作成を始めてはいけません。成功後は同じturnでbrainbase_resolve_turnを再実行しないでください。",
       "分類は単語一致ではなく依頼の意味で行ってください。正しい回答がBrainbase管理の事実、正本の選択、プロジェクト知識、または現在の実行時設定の所在に依存する場合はknowledgeを必ず含め、必要ならengineeringやoperationsと併記してください。general単独はBrainbase管理の事実を必要としない場合だけです。",
       "brainbase_resolve_turnが返したTurnContractを、その後の検索・操作・最終回答の契約として扱い、requiredになったcapabilityを回答前にすべて実行してください。knowledge.resolveがrequiredなら、指定されたprojectとknowledge intentでbrainbase_knowledge_resolveを実行してください。Stopで差し戻された場合は、resolve_turnを繰り返さず、Stopが示したmissing capabilityを実行してください。",
       "",
@@ -431,6 +431,7 @@ export async function generateClaudeReply(
     : undefined);
   const sandboxId = freshTenantContainerId("techknight-reply");
   let sandbox = options.createSandbox(sandboxId);
+  let operationFailed = false;
   try {
     const promptPath = runtimeClaudePromptPath("reply");
     const promptContent = buildPrompt(
@@ -686,10 +687,25 @@ export async function generateClaudeReply(
       outputChars: reply.length,
     });
     return { ...judgment, reply };
+  } catch (error) {
+    operationFailed = true;
+    throw error;
   } finally {
     // Conversation continuity comes from hydrated Slack/thread/runtime context.
     // The tenant isolation contract requires a fresh Container for every attempt.
-    await destroyTenantContainer(sandbox);
+    try {
+      await destroyTenantContainer(sandbox);
+    } catch (cleanupError) {
+      if (!operationFailed) throw cleanupError;
+      // Preserve the managed process or Claude error as the primary failure.
+      // Cleanup remains observable without replacing the actionable operation
+      // result with CONTAINER_SANITIZATION_UNPROVEN.
+      emitTurnLog("error", "mana_container_destroy_failed", event, trace, {
+        outcome: "error",
+        reasonCode: "CONTAINER_SANITIZATION_UNPROVEN",
+        durationMs: Date.now() - startedAt,
+      });
+    }
   }
 }
 
