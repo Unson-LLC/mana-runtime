@@ -66,14 +66,16 @@ jobs:
           test -n "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN"
           test -n "$SANDBOX_PROBE_TOKEN"
 
-      - name: 実行受領証トークンをWorkerへ設定
+      - name: BrainbaseトークンをWorkerへ設定
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BRAINBASE_GRAPH_API_TOKEN: ${{ secrets.BRAINBASE_GRAPH_API_TOKEN }}
           BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: ${{ secrets.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN }}
         run: |
           set -euo pipefail
+          printf '%s' "$BRAINBASE_GRAPH_API_TOKEN" | pnpm --filter @mana-runtime/cloud-runtime exec wrangler secret put BRAINBASE_GRAPH_API_TOKEN --config wrangler.unson-business.jsonc
           printf '%s' "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN" | pnpm --filter @mana-runtime/cloud-runtime exec wrangler secret put BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN --config wrangler.unson-business.jsonc
 
       - name: 既存の安全ゲートを通して配備
