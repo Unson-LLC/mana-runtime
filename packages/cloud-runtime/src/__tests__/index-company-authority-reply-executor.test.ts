@@ -686,7 +686,10 @@ describe("Company Authority runtime.execute reply executor", () => {
     });
     expect(claims.projects).toEqual(["mana"]);
     expect(runtimeMocks.replyInputs[0]?.options).toMatchObject({
-      brainbaseProjectCode: projectId,
+      brainbaseProjectCode: "mana",
+    });
+    expect(runtimeMocks.replyInputs[0]?.taskSearch).toMatchObject({
+      projectCodes: "mana",
     });
   });
 
