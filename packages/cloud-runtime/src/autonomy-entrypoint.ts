@@ -69,7 +69,7 @@ function required(value: string | undefined): string {
 function timeout(value: string | undefined): number {
   if (!value) return 5_000;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 30_000) {
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 120_000) {
     throw new Error("autonomy_runtime_not_configured");
   }
   return parsed;

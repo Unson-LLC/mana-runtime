@@ -135,7 +135,7 @@ function validateBindings(bindings: TenantRuntimeHttpBindings): Required<Pick<Te
   if (!bindings.service || typeof bindings.service.fetch !== "function") {
     deny("runtime_configuration", "CONFIGURATION_INVALID", { missing: "BRAINBASE_TENANT_RUNTIME_SERVICE" });
   }
-  if (!Number.isInteger(bindings.timeout_ms) || bindings.timeout_ms < 1 || bindings.timeout_ms > 30_000) {
+  if (!Number.isInteger(bindings.timeout_ms) || bindings.timeout_ms < 1 || bindings.timeout_ms > 120_000) {
     deny("runtime_configuration", "CONFIGURATION_INVALID");
   }
   return bindings as Required<Pick<TenantRuntimeHttpBindings,
