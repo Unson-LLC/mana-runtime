@@ -104,7 +104,10 @@ async function fetchHookEnvelope(payload) {
   return JSON.parse(body);
 }
 
-async function validatedOutput(envelope, payload, { allowStopRepair = true } = {}) {
+async function validatedOutput(envelope, payload, {
+  allowStopRepair = true,
+  onStopRepair,
+} = {}) {
   if (!envelope || typeof envelope !== "object" || envelope.schema_version !== "1"
       || envelope.accepted !== true || envelope.hook_event_name !== payload.hook_event_name
       || envelope.session_id !== payload.session_id || envelope.turn_id !== payload.turn_id
@@ -205,6 +208,7 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
             requiredAuditLines,
           ),
         };
+        await onStopRepair?.();
         const repairedEnvelope = await fetchHookEnvelope(repairedPayload);
         const repairedOutput = await validatedOutput(
           repairedEnvelope,
@@ -255,6 +259,7 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
         stop_hook_active: true,
         last_assistant_message: repairedStopAnswer(verifiedAnswer, remoteAuditLines),
       };
+      await onStopRepair?.();
       const repairedEnvelope = await fetchHookEnvelope(repairedPayload);
       const repairedOutput = await validatedOutput(
         repairedEnvelope,
@@ -421,7 +426,11 @@ async function markStopRepairRequested(payload) {
 async function requireResolveTurnFirst(payload) {
   const { path, stored } = await readTurnState(payload);
   if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
-  if (stored.resolve_turn_completed === true || isResolveTurnTool(payload)) return;
+  if (stored.resolve_turn_completed === true) {
+    if (isResolveTurnTool(payload)) throw new Error("judgment_resolve_turn_duplicate");
+    return;
+  }
+  if (isResolveTurnTool(payload)) return;
   throw new Error(
     "judgment_resolve_turn_required_first: mcp__brainbase__brainbase_resolve_turnを最初に実行してください",
   );
@@ -636,10 +645,21 @@ try {
   // which would make the Host reject the repair before Claude can perform it.
   // Persist a repairable Host block, then mark only the next external Stop as
   // active. validatedOutput still marks its own bounded synthetic retry below.
+  const stopRepairWasRequested = payload.hook_event_name === "Stop"
+    ? await stopRepairActive(payload) : false;
   const hostPayload = payload.hook_event_name === "Stop"
-    ? { ...payload, stop_hook_active: await stopRepairActive(payload) }
+    ? { ...payload, stop_hook_active: stopRepairWasRequested }
     : payload;
-  const output = await validatedOutput(await fetchHookEnvelope(hostPayload), hostPayload);
+  const output = await validatedOutput(
+    await fetchHookEnvelope(hostPayload),
+    hostPayload,
+    {
+      allowStopRepair: !stopRepairWasRequested,
+      ...(payload.hook_event_name === "Stop"
+        ? { onStopRepair: () => markStopRepairRequested(payload) }
+        : {}),
+    },
+  );
   if (payload.hook_event_name === "PostToolUse" || payload.hook_event_name === "PostToolUseFailure") {
     // Claude Code can omit an individual hook_response from stream-json even
     // after the Hook and Host both completed. Persist the Host-accepted
