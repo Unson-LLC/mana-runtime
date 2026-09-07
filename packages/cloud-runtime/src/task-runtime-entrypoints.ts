@@ -31,6 +31,7 @@ interface TaskWritePlacement {
   placementId: string;
   projectCodes: string[];
   taskWriteEnabled: boolean;
+  capabilities?: { gatewayTools: readonly string[] };
 }
 
 interface TaskBoardRuntimeEnv extends TaskBoardEnv {
@@ -112,14 +113,17 @@ export async function issueTaskWriteRequestContext(
   placement?: TaskWritePlacement,
   requesterPersonId?: string,
 ): Promise<{ taskWriteEnabled: boolean; taskWriteCapability?: string }> {
-  if (env.RUNTIME_TASK_WRITE_ENABLED !== "true" || placement?.taskWriteEnabled === false) return { taskWriteEnabled: false };
+  const taskWriteEnabled = env.RUNTIME_TASK_WRITE_ENABLED === "true"
+    && placement?.taskWriteEnabled !== false;
+  const gatewayEnabled = (placement?.capabilities?.gatewayTools.length ?? 0) > 0;
+  if (!taskWriteEnabled && !gatewayEnabled) return { taskWriteEnabled: false };
   const projects = placement?.projectCodes ?? parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
   const placementId = placement?.placementId ?? env.RUNTIME_PLACEMENT_ID;
   if (!env.TASK_WRITE_CAPABILITY_SECRET || !placementId || projects.length === 0 || !event.userId) {
     throw new Error("task_write_not_configured");
   }
   return {
-    taskWriteEnabled: true,
+    taskWriteEnabled,
     taskWriteCapability: await signTaskWriteCapability({
       version: 1,
       audience: "mana-task-write",
