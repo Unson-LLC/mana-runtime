@@ -3053,7 +3053,14 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       runtimeContext: placement.runtimeContext
         ? { ...placement.runtimeContext, escalationEmployee: placement.agent?.escalationEmployee }
         : undefined,
-      capabilities: canonicalPersonId !== undefined ? { mcp: [], gatewayTools: [] } : placement.capabilities,
+      capabilities: canonicalPersonId !== undefined
+        ? placement.capabilities?.mcp.includes("gateway")
+          && placement.capabilities.gatewayTools.length > 0
+          && placement.capabilities.gatewayTools.every((tool) =>
+            tool === "search_personal_kg" || tool === "register_personal_kg")
+          ? placement.capabilities
+          : { mcp: [], gatewayTools: [] }
+        : placement.capabilities,
       resolveActorIdentity: actorIdentityResolver,
       trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
       respondPolicy: placement.respondTo,
