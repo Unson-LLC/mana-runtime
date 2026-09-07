@@ -705,6 +705,18 @@ describe("Company Authority runtime.execute reply executor", () => {
     );
   });
 
+  it("preserves the bounded Graph context failure reason for production diagnosis", async () => {
+    runtimeMocks.hydrateGraphContext.mockResolvedValueOnce({
+      status: "unavailable",
+      content: "",
+      reason: "http_403",
+    });
+
+    await expect(executeCompanyAuthorityReplyOperation(runtimeEnv(), operation())).rejects.toThrow(
+      "graph_context_unavailable.http_403",
+    );
+  });
+
   it("keeps an unknown readback unresolved and does not resend an existing claim", async () => {
     runtimeMocks.readback.mockResolvedValue({
       state: "unknown",
