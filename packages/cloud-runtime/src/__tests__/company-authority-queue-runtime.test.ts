@@ -378,11 +378,35 @@ describe("company authority Queue production seam", () => {
     expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toEqual({
       event: "company_authority_provider_failed",
       correlation_id: runtimeEnvelope.correlation_id,
-      code: "UPSTREAM_UNAVAILABLE",
+      code: "slack_thread_history_unavailable",
       stage: "slack_thread_context.request",
       upstream_code: "PROVIDER_OPERATION_UNSUPPORTED",
       status: 403,
       provider_operation: "slack.conversations.replies.get",
+    });
+    errorLog.mockRestore();
+  });
+
+  it("preserves a bounded machine-readable failure code from the selected container", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const route = createCompanyAuthoritySelectedContainerProviderRoute({
+      create_outbox: () => new ExternalEffectOutboxMemoryStore(),
+      expected_audience: "mana-runtime",
+      desired_effect_by_capability: { company_read: "read" },
+      execute_container: vi.fn().mockRejectedValue(new Error("requester_identity_not_found")),
+    });
+
+    await expect(route.provider_send({
+      provider_key: "provider-a",
+      context,
+      request,
+      envelope: runtimeEnvelope,
+      payload,
+    })).rejects.toThrow("requester_identity_not_found");
+
+    expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toMatchObject({
+      event: "company_authority_provider_failed",
+      code: "requester_identity_not_found",
     });
     errorLog.mockRestore();
   });
