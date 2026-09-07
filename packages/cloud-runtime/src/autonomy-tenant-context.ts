@@ -216,7 +216,7 @@ export async function resolveAutonomyTenantContext(
     throw new TenantBoundaryError("worker_ingress", "WORKSPACE_CONNECTION_REAUTH_REQUIRED");
   }
   const timeoutMs = input.timeoutMs ?? 5_000;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
     throw new TenantBoundaryError("runtime_configuration", "CONFIGURATION_INVALID");
   }
   const desiredEffect = desiredEffectForCapability(input.capabilityId);

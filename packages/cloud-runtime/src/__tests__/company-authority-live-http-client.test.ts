@@ -40,6 +40,11 @@ function clients(service: TenantRuntimeServiceBinding, timeout_ms = 1_000) {
 }
 
 describe("Brainbase company authority HTTP client", () => {
+  it("accepts the production provider timeout budget", () => {
+    expect(() => clients({ fetch: vi.fn() }, 120_000)).not.toThrow();
+    expect(() => clients({ fetch: vi.fn() }, 120_001)).toThrow();
+  });
+
   it("round-trips the observed request over the private Service Binding", async () => {
     const response = { context: { signed: "opaque-company-authority-context" } };
     const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
