@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { signTaskWriteCapability } from "@openryoko/write-broker";
 import { createRuntimeGatewayProxyHandler } from "../runtime-gateway-proxy.js";
+import type { TenantContextEnvelope } from "../multitenancy/contracts.js";
 
 const secret = "g".repeat(32);
 const placements = JSON.stringify([{ placementId: "mana-dev-biz", channelId: "C_MANA", channelName: "0240-mana-dev", projectCodes: ["mana"], taskWriteEnabled: true,
@@ -12,8 +13,123 @@ const placements = JSON.stringify([{ placementId: "mana-dev-biz", channelId: "C_
 async function capability(actor = "UALLOWED", projects = ["mana"]) { return signTaskWriteCapability({ version: 1, audience: "mana-task-write", requestId: "Ev1", actor: { provider: "slack", id: actor, workspace: "T_TEAM" }, placementId: "mana-dev-biz", projects, operations: ["*"], expiresAt: Date.now() + 60_000, nonce: "n", budget: 3 }, secret); }
 const env = { TASK_WRITE_CAPABILITY_SECRET: secret, SLACK_EXPECTED_TEAM_ID: "T_TEAM", RUNTIME_PLACEMENTS_JSON: placements, RUNTIME_TASK_SEARCH_ENABLED: "true", BRAINBASE_TASK_API_BASE_URL: "https://tasks.example.com", BRAINBASE_TASK_API_TOKEN: "task-token", SLACK_BOT_TOKEN: "slack-token", RUNTIME_EMPLOYEES_JSON: JSON.stringify([{ name: "critical-reviewer", persona: "private instructions", model: "opus" }]) };
 const request = async (tool: string, args: Record<string, unknown>, token = capability()) => new Request("https://gateway.internal/api/runtime/gateway", { method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": await token }, body: JSON.stringify({ tool, arguments: args, request_id: "Ev1", call_index: 1 }) });
+const personalPlacements = JSON.stringify([{ placementId: "mana-personal-dm", channelId: "DPERSONAL", projectCodes: ["mana"], taskWriteEnabled: true,
+  audience: { type: "operator", allowedUserIds: ["UALLOWED"] }, capabilities: { mcp: ["gateway"], gatewayTools: ["search_personal_kg", "register_personal_kg"] } }]);
+async function personalCapability(actor = "UALLOWED") {
+  return signTaskWriteCapability({ version: 1, audience: "mana-task-write", requestId: "Ev1", actor: { provider: "slack", id: actor, workspace: "T_TEAM" }, placementId: "mana-personal-dm", projects: ["mana"], operations: ["*"], expiresAt: Date.now() + 60_000, nonce: "personal-n", budget: 3 }, secret);
+}
+const personalTenantContext = {
+  schema_version: "1.0", protocol_id: "mana-brainbase-tenant-context", protocol_version: "1.0", issuer: "brainbase", audience: ["mana-runtime"],
+  tenant: { tenant_id: "tenant-a", tenant_revision: "r1" },
+  workspace_connection: { connection_id: "conn-a", connection_revision: "r1", provider: "slack", installation_id: "inst-a", workspace_id: "T_TEAM", app_id: "A_MANA", status: "active" },
+  actor: { principal_id: "person-a", principal_type: "person", authenticated_subject_id: "UALLOWED" },
+  authorization: { organization_ids: ["org-a"], project_ids: ["mana"], data_scopes: ["personal_knowledge"], capability_ids: ["personal_read", "personal_write"] },
+  placement: { deployment_id: "mana-personal-dm", profile: "shared_cloud" },
+  slack: { event_id: "Ev1", channel_id: "DPERSONAL", thread_ts: "1.0", requester_id: "UALLOWED" },
+  correlation_id: "corr-a", operation_id: "op-a", idempotency_key: "idem-a", contract_revision: "r1", credential: { mode: "cloud_standard", credential_ref: "ref-a", billing_principal_id: "person-a" },
+  issued_at: "2026-09-06T00:00:00.000Z", expires_at: "2026-09-06T00:05:00.000Z", integrity: { method: "jws_detached", algorithm: "EdDSA", key_id: "key-a", value: "sig-a" },
+} as TenantContextEnvelope;
+const personalRequest = async (tool: string, args: Record<string, unknown>, token = personalCapability()) => new Request("https://gateway.internal/api/runtime/gateway", {
+  method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": await token },
+  body: JSON.stringify({ tool, arguments: args, request_id: "Ev1", call_index: 1 }),
+});
 
 describe("runtime gateway proxy", () => {
+  it("resolves read authority and searches only the verified personal DM", async () => {
+    const authority = { decision: "auto", company_authority_response: "signed-read" };
+    const resolveAuthority = vi.fn(async (input: { capability: string; effect: string; requestId: string }) => ({ ...authority, input }));
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(input instanceof Request ? input.url : String(input)).pathname).toBe("/api/personal-knowledge/search");
+      expect((init?.headers as Headers).get("authorization")).toBe("Bearer bb-token");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        query: "契約", limit: 10, company_authority_response: { ...authority, input: { capability: "personal_read", effect: "read", requestId: "Ev1" } },
+      });
+      return Response.json([{ event_id: "event-a", body: "本人メモ" }]);
+    });
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch, {
+      personalKnowledge: { tenantContext: personalTenantContext, resolveAuthority },
+    })(await personalRequest("search_personal_kg", { query: " 契約 " }), {
+      ...env, RUNTIME_PLACEMENTS_JSON: personalPlacements, BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL: "https://brainbase.example.com", BRAINBASE_PERSONAL_KNOWLEDGE_API_TOKEN: "bb-token",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ untrusted_data: true, items: [{ event_id: "event-a", body: "本人メモ" }] });
+    expect(resolveAuthority).toHaveBeenCalledWith({ capability: "personal_read", effect: "read", requestId: "Ev1" });
+  });
+
+  it("registers only persisted personal event fields with write authority", async () => {
+    const resolveAuthority = vi.fn(async (input: { capability: string; effect: string; requestId: string }) => ({ signed: input }));
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        body: "本人の判断", body_hash: "sha256:abc", event_id: "event-a", source: { kind: "slack" },
+        source_pointer: { channel_id: "DPERSONAL" }, permission_snapshot: { scope: "personal" }, sensitivity: "private",
+        occurred_at: "2026-09-06T00:00:00.000Z", captured_at: "2026-09-06T00:00:01.000Z",
+        company_authority_response: { signed: { capability: "personal_write", effect: "write", requestId: "Ev1" } },
+      });
+      return Response.json({ event_id: "event-a", owner_person_id: "person-a", organization_id: "org-a", body_hash: "sha256:abc" });
+    });
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch, {
+      personalKnowledge: { tenantContext: personalTenantContext, resolveAuthority },
+    })(await personalRequest("register_personal_kg", {
+      body: "本人の判断", body_hash: "sha256:abc", event_id: "event-a", source: { kind: "slack" },
+      source_pointer: { channel_id: "DPERSONAL" }, permission_snapshot: { scope: "personal" }, sensitivity: "private",
+      occurred_at: "2026-09-06T00:00:00.000Z", captured_at: "2026-09-06T00:00:01.000Z",
+    }), {
+      ...env, RUNTIME_PLACEMENTS_JSON: personalPlacements, BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL: "https://brainbase.example.com",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ untrusted_data: true, event: { event_id: "event-a", owner_person_id: "person-a", organization_id: "org-a", body_hash: "sha256:abc" } });
+    expect(resolveAuthority).toHaveBeenCalledWith({ capability: "personal_write", effect: "write", requestId: "Ev1" });
+  });
+
+  it.each([
+    ["owner_person_id", { body: "x", body_hash: "sha256:x", owner_person_id: "person-a" }],
+    ["organization_id", { body: "x", body_hash: "sha256:x", organization_id: "org-a" }],
+    ["authority", { query: "x", authority: "spoof" }],
+  ])("rejects model-supplied personal scope %s before authority or upstream", async (_name, args) => {
+    const resolveAuthority = vi.fn();
+    const fetchImpl = vi.fn();
+    const tool = "query" in args ? "search_personal_kg" : "register_personal_kg";
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch, {
+      personalKnowledge: { tenantContext: personalTenantContext, resolveAuthority },
+    })(await personalRequest(tool, args), {
+      ...env, RUNTIME_PLACEMENTS_JSON: personalPlacements, BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL: "https://brainbase.example.com",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_arguments" });
+    expect(resolveAuthority).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects shared or non-DM placements before personal authority resolution", async () => {
+    const resolveAuthority = vi.fn();
+    const fetchImpl = vi.fn();
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch, {
+      personalKnowledge: { tenantContext: personalTenantContext, resolveAuthority },
+    })(await request("search_personal_kg", { query: "x" }), {
+      ...env,
+      RUNTIME_PLACEMENTS_JSON: placements.replace('"send_message"', '"send_message","search_personal_kg"'),
+      BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL: "https://brainbase.example.com",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "gateway_denied" });
+    expect(resolveAuthority).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not turn an invalid or failed personal upstream response into an empty result", async () => {
+    const resolveAuthority = vi.fn(async () => ({ signed: true }));
+    const fetchImpl = vi.fn(async () => Response.json({ items: [] }, { status: 500 }));
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch, {
+      personalKnowledge: { tenantContext: personalTenantContext, resolveAuthority },
+    })(await personalRequest("search_personal_kg", { query: "x" }), {
+      ...env, RUNTIME_PLACEMENTS_JSON: personalPlacements, BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL: "https://brainbase.example.com",
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "gateway_upstream_failed" });
+  });
+
   it("lists only task channels authorized for the actor", async () => {
     const fetchImpl = vi.fn();
     const response = await createRuntimeGatewayProxyHandler(fetchImpl)(await request("list_authorized_task_channels", {}), env);

@@ -25,6 +25,7 @@ export interface TenantProviderOutboundEnv {
   BRAINBASE_TENANT_RUNTIME_SERVICE?: {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
+  BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_GRAPH_API_BASE_URL?: string;
   BRAINBASE_MCP_BASE_URL?: string;

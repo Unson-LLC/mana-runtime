@@ -57,6 +57,7 @@ const BASE_ENV = {
   BRAINBASE_TENANT_RUNTIME_SERVICE: {
     fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
   },
+  BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL: "https://personal.example.test",
   BRAINBASE_TASK_API_BASE_URL: "https://tasks.example.test",
   BRAINBASE_GRAPH_API_BASE_URL: "https://graph.example.test",
   BRAINBASE_MCP_BASE_URL: "https://mcp.example.test",
@@ -116,6 +117,12 @@ function jsonRequest(url: string, method: string, body?: Record<string, unknown>
 }
 
 const FORWARD_CASES: ForwardCase[] = [
+  ...(["search", "register"] as const).map((operation): ForwardCase => ({
+    label: `Personal knowledge ${operation}`, operation: `brainbase.personal_knowledge.${operation}`,
+    request: () => jsonRequest(`https://personal.example.test/api/personal-knowledge/${operation === "search" ? "search" : "events"}`,
+      "POST", { company_authority_response: { signed: "fixture" }, ...(operation === "search" ? { query: "memo" } : { body: "memo", body_hash: "sha256:fixture" }) }),
+    wireRequest: { body: { company_authority_response: { signed: "fixture" }, ...(operation === "search" ? { query: "memo" } : { body: "memo", body_hash: "sha256:fixture" }) } },
+  })),
   { label: "Anthropic messages", operation: "anthropic.messages.create",
     request: () => jsonRequest("https://api.anthropic.com/v1/messages", "POST", { model: "claude-sonnet-4-5", messages: [] }),
     wireRequest: { body: { model: "claude-sonnet-4-5", messages: [] } } },
@@ -211,6 +218,22 @@ const FORWARD_CASES: ForwardCase[] = [
 ];
 
 describe("Brainbase trusted provider forwarder HTTP integration", () => {
+  it.each([
+    ["GET", "https://personal.example.test/api/personal-knowledge/search"],
+    ["POST", "https://personal.example.test/api/personal-knowledge/search?owner=other"],
+    ["POST", "https://personal.example.test/api/personal-knowledge/promotions"],
+    ["POST", "https://other.example.test/api/personal-knowledge/events"],
+  ])("does not forward an unallowlisted personal operation %s %s", async (method, url) => {
+    const service = vi.fn();
+    const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
+      env: { ...BASE_ENV, BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: service } }, tenant_context: TENANT_CONTEXT,
+    });
+    await expect(forwarder.forward({ lease: LEASE, expected_binding: BINDING,
+      request: jsonRequest(url, method, method === "POST" ? {} : undefined), now: LEASE.issued_at,
+    })).rejects.toMatchObject({ code: "PROVIDER_OPERATION_UNSUPPORTED" });
+    expect(service).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["create", jsonRequest("https://tasks.example.test/api/meeting-minutes/context-receipts", "POST", { run_id: "run-a" })],
     ["get", jsonRequest("https://tasks.example.test/api/meeting-minutes/context-receipts/receipt-a?run_id=run-a&project_code=mana&transcript_sha256=abc", "GET")],

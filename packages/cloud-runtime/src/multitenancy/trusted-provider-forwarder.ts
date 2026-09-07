@@ -33,6 +33,7 @@ export interface BrainbaseTrustedProviderForwarderEnv {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
+  BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_GRAPH_API_BASE_URL?: string;
   BRAINBASE_MCP_BASE_URL?: string;
@@ -255,6 +256,13 @@ async function mapProviderRequest(
         return { provider_operation: "nocodb.columns.update", request: addBody({ path_params: { column: segments[4] } }) };
       }
     }
+  }
+
+  const personalPath = relativePath(url, configuredBase(env.BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL));
+  if (personalPath && method === "POST" && !url.search && !url.hash) {
+    const operation = personalPath === "/api/personal-knowledge/search" ? "search"
+      : personalPath === "/api/personal-knowledge/events" ? "register" : undefined;
+    if (operation) return { provider_operation: `brainbase.personal_knowledge.${operation}`, request: addBody({}) };
   }
 
   const taskPath = relativePath(url, configuredBase(env.BRAINBASE_TASK_API_BASE_URL));

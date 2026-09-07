@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const proxyMocks = vi.hoisted(() => ({
   resolve: vi.fn(),
+  gateway: vi.fn(),
   credentialFetchForResolvedContext: vi.fn(),
   createTaskSearchProxyHandler: vi.fn(),
   createTaskWriteProxyHandler: vi.fn(),
@@ -42,6 +43,12 @@ vi.mock("../brainbase-mcp-proxy.js", async (importOriginal) => {
   return { ...actual, handleBrainbaseMcpProxyRequest: proxyMocks.handleBrainbaseMcpProxyRequest };
 });
 
+vi.mock("../runtime-gateway-proxy.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../runtime-gateway-proxy.js")>();
+  return { ...actual, createRuntimeGatewayProxyHandler: proxyMocks.gateway };
+});
+
+import { RUNTIME_GATEWAY_PROXY_HOST } from "../runtime-gateway-proxy.js";
 import {
   TechKnightSandbox,
 } from "../sandbox-runtime.js";
@@ -89,6 +96,8 @@ const outboundContext = {
 
 describe("Company Authority sandbox proxy guard", () => {
   beforeEach(() => {
+    proxyMocks.gateway.mockReset();
+    proxyMocks.gateway.mockReturnValue(vi.fn(async () => Response.json({ handled: "gateway" })));
     proxyMocks.resolve.mockReset();
     proxyMocks.credentialFetchForResolvedContext.mockReset();
     proxyMocks.createTaskSearchProxyHandler.mockReset();
@@ -105,6 +114,30 @@ describe("Company Authority sandbox proxy guard", () => {
     proxyMocks.handleBrainbaseMcpProxyRequest.mockResolvedValue(
       Response.json({ handled: "brainbase-mcp" }),
     );
+  });
+
+  it.each(["search_personal_kg", "register_personal_kg"])("wires only %s through the owner-authority gateway", async (tool) => {
+    proxyMocks.resolve.mockResolvedValue(resolvedWithCompanyAuthority);
+    const response = await TechKnightSandbox.outboundByHost![RUNTIME_GATEWAY_PROXY_HOST](new Request(
+      `https://${RUNTIME_GATEWAY_PROXY_HOST}/api/runtime/gateway`, {
+        method: "POST", headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: "tb_test" },
+        body: JSON.stringify({ tool, arguments: {}, request_id: "Ev123" }),
+      }), env(), outboundContext);
+    expect(response.status).toBe(200);
+    expect(proxyMocks.gateway).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({
+      personalKnowledge: { tenantContext: resolvedWithCompanyAuthority.tenant_context, resolveAuthority: expect.any(Function) },
+    }));
+  });
+
+  it.each(["search_tasks", "post_slack_message", "unknown"])("keeps %s denied on the generic gateway for Company Authority", async (tool) => {
+    proxyMocks.resolve.mockResolvedValue(resolvedWithCompanyAuthority);
+    const response = await TechKnightSandbox.outboundByHost![RUNTIME_GATEWAY_PROXY_HOST](new Request(
+      `https://${RUNTIME_GATEWAY_PROXY_HOST}/api/runtime/gateway`, {
+        method: "POST", headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: "tb_test" }, body: JSON.stringify({ tool }),
+      }), env(), outboundContext);
+    expect(response.status).toBe(403);
+    expect(proxyMocks.gateway).not.toHaveBeenCalled();
+    expect(proxyMocks.credentialFetchForResolvedContext).not.toHaveBeenCalled();
   });
 
   it("rejects Company Authority requests before credential or generic handler creation", async () => {

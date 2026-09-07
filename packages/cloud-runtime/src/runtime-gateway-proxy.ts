@@ -1,6 +1,7 @@
 import { TaskApiClient, type TaskListPage } from "@openryoko/task-runtime-core";
 import { verifyTaskWriteCapability } from "@openryoko/write-broker";
 import { parseRuntimePlacements, type RuntimePlacement } from "./runtime-config.js";
+import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
 import { createTaskWriteProxyHandler, type TaskWriteProxyEnv } from "./task-write-proxy.js";
 
 export const RUNTIME_GATEWAY_PROXY_HOST = "gateway.internal";
@@ -9,6 +10,8 @@ export const RUNTIME_GATEWAY_PATH = "/api/runtime/gateway";
 export interface RuntimeGatewayProxyEnv extends TaskWriteProxyEnv {
   RUNTIME_PLACEMENTS_JSON?: string;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
+  BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL?: string;
+  BRAINBASE_PERSONAL_KNOWLEDGE_API_TOKEN?: string;
   SLACK_BOT_TOKEN?: string;
   RUNTIME_EMPLOYEES_JSON?: string;
   RUNTIME_SESSION_REGISTRY?: {
@@ -18,6 +21,20 @@ export interface RuntimeGatewayProxyEnv extends TaskWriteProxyEnv {
 }
 
 type GatewayBody = { tool: string; arguments: Record<string, unknown>; request_id: string; call_index?: number };
+export type PersonalKnowledgeCapability = "personal_read" | "personal_write";
+export type PersonalKnowledgeEffect = "read" | "write";
+
+export interface RuntimeGatewayPersonalKnowledgeAuthorityRequest {
+  capability: PersonalKnowledgeCapability;
+  effect: PersonalKnowledgeEffect;
+  requestId: string;
+}
+
+export interface RuntimeGatewayPersonalKnowledgeDependencies {
+  tenantContext: TenantContextEnvelope;
+  resolveAuthority(input: RuntimeGatewayPersonalKnowledgeAuthorityRequest): Promise<unknown>;
+}
+
 export interface RuntimeGatewayProxyDependencies {
   deliverSlackMessage?(input: {
     requestId: string;
@@ -26,8 +43,112 @@ export interface RuntimeGatewayProxyDependencies {
     threadTs?: string;
     text: string;
   }): Promise<{ channel: string; ts?: string }>;
+  /**
+   * Resolves a fresh, operation-specific signed response for the Brainbase
+   * Personal KG API. The callback owns Slack subject -> canonical person
+   * binding and must never accept owner/org/authority values from model args.
+   */
+  personalKnowledge?: RuntimeGatewayPersonalKnowledgeDependencies;
 }
 const responseError = (error: string, status: number) => Response.json({ error }, { status });
+
+const PERSONAL_KNOWLEDGE_TOOLS = ["search_personal_kg", "register_personal_kg"] as const;
+type PersonalKnowledgeTool = (typeof PERSONAL_KNOWLEDGE_TOOLS)[number];
+
+function hasOnlyKeys(args: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const accepted = new Set(allowed);
+  return Object.keys(args).every((key) => accepted.has(key));
+}
+
+function personalKnowledgeSearchInput(args: Record<string, unknown>): { query: string; limit: number } | undefined {
+  if (!hasOnlyKeys(args, ["query", "limit"]) || typeof args.query !== "string") return undefined;
+  const query = args.query.trim();
+  if (!query || query.length > 4000) return undefined;
+  const limit = args.limit === undefined ? 10 : args.limit;
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 50) return undefined;
+  return { query, limit };
+}
+
+const PERSONAL_KNOWLEDGE_EVENT_FIELDS = [
+  "body", "body_hash", "event_id", "source", "source_pointer", "parent_episode_id",
+  "permission_snapshot", "sensitivity", "occurred_at", "captured_at",
+] as const;
+
+function personalKnowledgeEventInput(args: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!hasOnlyKeys(args, PERSONAL_KNOWLEDGE_EVENT_FIELDS) || typeof args.body !== "string"
+    || !args.body.trim()
+    || typeof args.body_hash !== "string" || !args.body_hash.trim()) return undefined;
+  for (const key of PERSONAL_KNOWLEDGE_EVENT_FIELDS) {
+    const value = args[key];
+    if (value === undefined || key === "body" || key === "body_hash") continue;
+    if (["source", "source_pointer", "permission_snapshot"].includes(key)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    } else if (typeof value !== "string" || !value.trim()) {
+      return undefined;
+    }
+  }
+  return Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined));
+}
+
+function personalKnowledgeContextAllowed(
+  tenantContext: TenantContextEnvelope,
+  actor: { provider: string; id: string; workspace: string; personId?: string },
+  placement: RuntimePlacement,
+  expectedWorkspace: string,
+  requestId: string,
+): boolean {
+  return actor.provider === "slack"
+    && actor.workspace === expectedWorkspace
+    && tenantContext.workspace_connection.provider === "slack"
+    && tenantContext.workspace_connection.status === "active"
+    && tenantContext.workspace_connection.workspace_id === expectedWorkspace
+    && tenantContext.actor.principal_type === "person"
+    && typeof tenantContext.actor.principal_id === "string"
+    && tenantContext.actor.principal_id.trim().length > 0
+    && tenantContext.actor.authenticated_subject_id === actor.id
+    && tenantContext.slack.requester_id === actor.id
+    && tenantContext.slack.event_id === requestId
+    && /^D[A-Z0-9]+$/.test(tenantContext.slack.channel_id)
+    && tenantContext.slack.channel_id === placement.channelId
+    && (actor.personId === undefined || actor.personId === tenantContext.actor.principal_id);
+}
+
+function personalKnowledgeResult(value: unknown, tool: PersonalKnowledgeTool): unknown {
+  if (tool === "search_personal_kg") {
+    if (!Array.isArray(value) || value.some((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+      const eventId = (item as Record<string, unknown>).event_id;
+      return typeof eventId !== "string" || !eventId.trim();
+    })) {
+      throw new Error("gateway_upstream_invalid_response");
+    }
+    return {
+      untrusted_data: true,
+      items: value,
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("gateway_upstream_invalid_response");
+  const event = value as Record<string, unknown>;
+  if (typeof event.event_id !== "string" || !event.event_id.trim()
+    || typeof event.owner_person_id !== "string" || !event.owner_person_id.trim()
+    || typeof event.organization_id !== "string" || !event.organization_id.trim()
+    || typeof event.body_hash !== "string" || !event.body_hash.trim()) {
+    throw new Error("gateway_upstream_invalid_response");
+  }
+  return { untrusted_data: true, event };
+}
+
+function personalKnowledgeRequest(
+  tool: PersonalKnowledgeTool,
+  args: Record<string, unknown>,
+): { capability: PersonalKnowledgeCapability; effect: PersonalKnowledgeEffect; payload: Record<string, unknown> } | undefined {
+  if (tool === "search_personal_kg") {
+    const payload = personalKnowledgeSearchInput(args);
+    return payload ? { capability: "personal_read", effect: "read", payload } : undefined;
+  }
+  const payload = personalKnowledgeEventInput(args);
+  return payload ? { capability: "personal_write", effect: "write", payload } : undefined;
+}
 
 function decodePlacementId(token: string): string {
   const encoded = token.split(".")[0];
@@ -139,6 +260,71 @@ export function createRuntimeGatewayProxyHandler(
       const placement = placements.find((item) => item.placementId === claims.placementId);
       if (!placement || !placement.audience?.allowedUserIds.includes(claims.actor.id) || !placement.capabilities?.gatewayTools.includes(body.tool)) return responseError("gateway_denied", 403);
       if (claims.projects.length !== placement.projectCodes.length || claims.projects.some((project) => !placement.projectCodes.includes(project))) return responseError("gateway_denied", 403);
+
+      if ((PERSONAL_KNOWLEDGE_TOOLS as readonly string[]).includes(body.tool)) {
+        const tool = body.tool as PersonalKnowledgeTool;
+        const input = personalKnowledgeRequest(tool, body.arguments);
+        if (!input) return responseError("invalid_arguments", 400);
+        const personalKnowledge = dependencies.personalKnowledge;
+        if (!personalKnowledge || !env.BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL
+          || (!env.BRAINBASE_PERSONAL_KNOWLEDGE_API_TOKEN && !brokered)) {
+          return responseError("gateway_not_configured", 503);
+        }
+        if (!personalKnowledgeContextAllowed(
+          personalKnowledge.tenantContext,
+          claims.actor,
+          placement,
+          env.SLACK_EXPECTED_TEAM_ID,
+          body.request_id,
+        )) return responseError("gateway_denied", 403);
+
+        let companyAuthorityResponse: unknown;
+        try {
+          companyAuthorityResponse = await personalKnowledge.resolveAuthority({
+            capability: input.capability,
+            effect: input.effect,
+            requestId: body.request_id,
+          });
+        } catch {
+          return responseError("gateway_authority_denied", 403);
+        }
+        if (!companyAuthorityResponse || typeof companyAuthorityResponse !== "object" || Array.isArray(companyAuthorityResponse)) {
+          return responseError("gateway_authority_denied", 403);
+        }
+
+        let endpoint: URL;
+        try {
+          const base = new URL(env.BRAINBASE_PERSONAL_KNOWLEDGE_API_BASE_URL);
+          if (base.protocol !== "https:" || base.username || base.password || base.search || base.hash) throw new Error("invalid_endpoint");
+          endpoint = new URL(tool === "search_personal_kg"
+            ? "/api/personal-knowledge/search"
+            : "/api/personal-knowledge/events", base);
+        } catch {
+          return responseError("gateway_not_configured", 503);
+        }
+        const headers = new Headers({ "content-type": "application/json", accept: "application/json" });
+        if (env.BRAINBASE_PERSONAL_KNOWLEDGE_API_TOKEN) headers.set("authorization", `Bearer ${env.BRAINBASE_PERSONAL_KNOWLEDGE_API_TOKEN}`);
+        let upstream: Response;
+        try {
+          upstream = await providerFetch(endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ ...input.payload, company_authority_response: companyAuthorityResponse }),
+          });
+        } catch {
+          return responseError("gateway_upstream_failed", 502);
+        }
+        if (!upstream.ok) return responseError("gateway_upstream_failed", 502);
+        let result: unknown;
+        try {
+          result = await upstream.json();
+          result = personalKnowledgeResult(result, tool);
+        } catch (cause) {
+          return responseError(cause instanceof Error && cause.message === "gateway_upstream_invalid_response"
+            ? "gateway_upstream_invalid_response" : "gateway_upstream_failed", 502);
+        }
+        return Response.json(result);
+      }
 
       if (["create_task","update_task","transition_task"].includes(body.tool)) {
         const operation = body.tool.replace("_task", "");

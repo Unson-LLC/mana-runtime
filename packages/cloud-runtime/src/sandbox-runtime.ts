@@ -26,11 +26,13 @@ import { proxyDevelopmentCallback } from "./multitenancy/development-callback-pr
 import { authorizeRuntimeAnthropicOutbound, type RuntimeAnthropicOutboundEnv } from "./runtime-anthropic-outbound.js";
 import { authorizeRuntimeBrainbaseOutbound } from "./runtime-brainbase-outbound.js";
 import { runtimeGatewayBoundaries } from "./multitenancy/runtime-gateway-boundaries.js";
+import { isPersonalKnowledgeGatewayRequest, resolvePersonalKnowledgeAuthority } from "./multitenancy/personal-knowledge-authority.js";
+import type { CompanyAuthorityRuntimeConfigEnv } from "./multitenancy/company-authority-runtime-config.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
 export { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
 
-export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv, GoogleDriveMcpProxyEnv, RuntimeGatewayProxyEnv, RuntimeAnthropicOutboundEnv {
+export interface SandboxRuntimeEnv extends CompanyAuthorityRuntimeConfigEnv, SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv, GoogleDriveMcpProxyEnv, RuntimeGatewayProxyEnv, RuntimeAnthropicOutboundEnv {
   TECHKNIGHT_SANDBOX: DurableObjectNamespace<TechKnightSandbox>;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
   RUNTIME_PROJECT_CODES?: string;
@@ -91,7 +93,9 @@ async function authorizeTenantRuntimeProxy(
   const host = new URL(request.url).hostname;
   if (resolved.company_authority_envelope !== undefined
     && host !== BRAINBASE_MCP_PROXY_HOST
-    && host !== TASK_WRITE_PROXY_HOST) {
+    && host !== TASK_WRITE_PROXY_HOST
+    && !(host === RUNTIME_GATEWAY_PROXY_HOST
+      && await isPersonalKnowledgeGatewayRequest(request))) {
     return Response.json({ error: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN" }, { status: 403 });
   }
   let credentialFetch: typeof fetch;
@@ -164,6 +168,10 @@ TechKnightSandbox.outboundByHost = {
     request, env, await runtimeGatewayBoundaries(request),
     (authorized, credentialFetch, proxyEnv, resolved) =>
       createRuntimeGatewayProxyHandler(credentialFetch, {
+        personalKnowledge: {
+          tenantContext: resolved.tenant_context,
+          resolveAuthority: (input) => resolvePersonalKnowledgeAuthority(env, resolved, input),
+        },
         deliverSlackMessage: (input) => deliverTenantGatewaySlackMessage(
           input,
           proxyEnv,
