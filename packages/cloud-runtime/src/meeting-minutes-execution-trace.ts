@@ -164,6 +164,29 @@ function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function traceEventEvictionPriority(value: unknown): number {
+  const input = objectValue(value);
+  if (input?.event === "upstream_response_progress") return 0;
+  if (input?.event === "stdout_event") {
+    if (input.type === "system" && input.subtype !== "init" && input.subtype !== "hook_response") return 0;
+    if (input.type !== "result") return 1;
+  }
+  return 2;
+}
+
+/** Keep lifecycle and transport metadata when Claude emits many stdout events. */
+function trimBoundedTraceEvents<T>(events: T[]): void {
+  while (events.length > MEETING_MINUTES_TRACE_MAX_EVENTS) {
+    const lowPriorityIndex = events.findIndex((event) => traceEventEvictionPriority(event) === 0);
+    if (lowPriorityIndex >= 0) events.splice(lowPriorityIndex, 1);
+    else {
+      const stdoutIndex = events.findIndex((event) => traceEventEvictionPriority(event) === 1);
+      if (stdoutIndex >= 0) events.splice(stdoutIndex, 1);
+      else events.shift();
+    }
+  }
+}
+
 function firstValue(input: Record<string, unknown>, camel: string, snake: string): unknown {
   return camel in input ? input[camel] : input[snake];
 }
@@ -321,7 +344,8 @@ export function sanitizeMeetingMinutesExecutionTrace(value: unknown): MeetingMin
     const event = sanitizeTraceEvent(rawEvent);
     if (event) events.push(event);
   }
-  const boundedEvents = events.slice(-MEETING_MINUTES_TRACE_MAX_EVENTS);
+  const boundedEvents = events.slice();
+  trimBoundedTraceEvents(boundedEvents);
   if (boundedEvents.length === 0) return null;
   return {
     schemaVersion: MEETING_MINUTES_TRACE_SCHEMA_VERSION,
@@ -339,8 +363,8 @@ export function parseMeetingMinutesExecutionTrace(stderr: string): MeetingMinute
     const payload = line.slice(MEETING_MINUTES_TRACE_PREFIX.length);
     try {
       const parsed: unknown = JSON.parse(payload);
-      if (rawEvents.length >= MEETING_MINUTES_TRACE_MAX_EVENTS) rawEvents.shift();
       rawEvents.push(parsed);
+      trimBoundedTraceEvents(rawEvents);
     } catch {
       // Child stderr is intentionally mixed in. Ignore malformed trace lines.
     }
@@ -508,7 +532,19 @@ function emit(event, fields = {}, elapsedOverride) {
   const record = { schemaVersion: TRACE_SCHEMA_VERSION, event,
     elapsedMs: elapsedOverride === undefined ? elapsedMs() : elapsedOverride, requestCount, ...fields };
   traceEvents.push(record);
-  if (traceEvents.length > MAX_TRACE_EVENTS) traceEvents.shift();
+  while (traceEvents.length > MAX_TRACE_EVENTS) {
+    const lowPriorityIndex = traceEvents.findIndex((item) => {
+      if (item.event === "upstream_response_progress") return true;
+      return item.event === "stdout_event" && item.type === "system"
+        && item.subtype !== "init" && item.subtype !== "hook_response";
+    });
+    if (lowPriorityIndex >= 0) traceEvents.splice(lowPriorityIndex, 1);
+    else {
+      const stdoutIndex = traceEvents.findIndex((item) => item.event === "stdout_event" && item.type !== "result");
+      if (stdoutIndex >= 0) traceEvents.splice(stdoutIndex, 1);
+      else traceEvents.shift();
+    }
+  }
   try {
     process.stderr.write(TRACE_PREFIX + JSON.stringify(record) + "\n");
   } catch {

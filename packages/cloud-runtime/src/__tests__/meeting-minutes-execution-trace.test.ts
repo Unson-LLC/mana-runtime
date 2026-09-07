@@ -118,4 +118,45 @@ describe("meeting-minutes execution trace", () => {
     expect(trace?.events[0]?.elapsedMs).toBe(2);
     expect(trace?.events.at(-1)?.elapsedMs).toBe(MEETING_MINUTES_TRACE_MAX_EVENTS + 1);
   });
+
+  it("keeps lifecycle, request metadata, result, and exit around a stdout event flood", () => {
+    const progressFlood = Array.from({ length: MEETING_MINUTES_TRACE_MAX_EVENTS + 32 }, (_, index) => traceLine({
+      event: "upstream_response_progress", elapsedMs: 10 + index, requestIndex: 1, bodyBytes: index + 1,
+    }));
+    const systemFlood = Array.from({ length: MEETING_MINUTES_TRACE_MAX_EVENTS + 32 }, (_, index) => traceLine({
+      event: "stdout_event", elapsedMs: 10 + index, type: "system",
+      secret: "must-not-escape",
+    }));
+    const assistantFlood = Array.from({ length: MEETING_MINUTES_TRACE_MAX_EVENTS + 32 }, (_, index) => traceLine({
+      event: "stdout_event", elapsedMs: 10 + index, type: "assistant", subtype: "message_delta",
+    }));
+    const stderr = [
+      traceLine({ event: "runner_started", elapsedMs: 1 }),
+      traceLine({ event: "upstream_request_start", elapsedMs: 2, requestIndex: 1, requestCount: 1,
+        model: "claude-sonnet-4-5", thinkingType: "disabled", thinkingBudgetTokens: 2048,
+        maxTokens: 16384, effort: "medium" }),
+      traceLine({ event: "upstream_response_first_body_chunk", elapsedMs: 3, requestIndex: 1, bodyBytes: 64 }),
+      traceLine({ event: "stdout_event", elapsedMs: 200, type: "result", subtype: "success" }),
+      ...progressFlood,
+      ...systemFlood,
+      ...assistantFlood,
+      traceLine({ event: "child_close", elapsedMs: 201, exitCode: 0 }),
+      traceLine({ event: "runner_finished", elapsedMs: 202, exitCode: 0 }),
+    ].join("\n");
+
+    const trace = parseMeetingMinutesExecutionTrace(stderr);
+    expect(trace?.events).toHaveLength(MEETING_MINUTES_TRACE_MAX_EVENTS);
+    expect(trace?.events.map((event) => event.event)).toEqual(expect.arrayContaining([
+      "runner_started", "upstream_request_start", "upstream_response_first_body_chunk",
+      "child_close", "runner_finished",
+    ]));
+    expect(trace?.events.find((event) => event.event === "upstream_request_start")).toMatchObject({
+      model: "claude-sonnet-4-5", thinkingType: "disabled", thinkingBudgetTokens: 2048,
+      maxTokens: 16384, effort: "medium",
+    });
+    expect(trace?.events.find((event) => event.event === "stdout_event" && event.type === "result"))
+      .toMatchObject({ subtype: "success" });
+    expect(trace?.events.find((event) => event.event === "child_close")).toMatchObject({ exitCode: 0 });
+    expect(JSON.stringify(trace)).not.toContain("must-not-escape");
+  });
 });
