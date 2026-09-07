@@ -505,7 +505,7 @@ export async function generateClaudeReply(
       ...(options.taskSearchEnabled && requestsOwnTasks(event.text) && requesterIdentity ? {
         MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID: requesterIdentity.personId,
       } : {}),
-      ...(options.taskWriteEnabled ? {
+      ...(options.taskWriteCapability ? {
         MANA_TASK_WRITE_REQUEST_ID: event.eventId,
         MANA_TASK_WRITE_CAPABILITY: options.taskWriteCapability,
       } : {}),

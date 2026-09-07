@@ -101,6 +101,25 @@ describe("Cloudflare task runtime entrypoints", () => {
       projects: ["back-office"], budget: 3, nonce: "Ev123" });
   });
 
+  it("issues a requester capability for a gateway-only personal KG placement", async () => {
+    const result = await issueTaskWriteRequestContext(event, {
+      ...runtime,
+      RUNTIME_TASK_WRITE_ENABLED: "false",
+    }, 1_000, {
+      placementId: "unson-sato",
+      projectCodes: ["brainbase"],
+      taskWriteEnabled: false,
+      capabilities: { gatewayTools: ["search_personal_kg", "register_personal_kg"] },
+    }, "per_requester");
+
+    expect(result.taskWriteEnabled).toBe(false);
+    const claims = await verifyTaskWriteCapability(result.taskWriteCapability!, runtime.TASK_WRITE_CAPABILITY_SECRET, {
+      requestId: "Ev123", workspace: "T0882T8N9UH", placementId: "unson-sato", now: 1_001,
+    });
+    expect(claims).toMatchObject({ actor: { id: "U_REQUESTER", personId: "per_requester" },
+      projects: ["brainbase"] });
+  });
+
   it("fails closed when writes are enabled without trusted authority", async () => {
     await expect(issueTaskWriteRequestContext(event, { ...runtime, RUNTIME_PLACEMENT_ID: undefined }))
       .rejects.toThrow("task_write_not_configured");
