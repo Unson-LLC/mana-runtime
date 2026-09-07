@@ -134,6 +134,12 @@ describe("Brainbase judgment Hook forwarder", () => {
       tool_name: "mcp__brainbase__brainbase_resolve_turn",
     }, env);
     expect(recorded.code).toBe(0);
+    const duplicateResolve = await runHook({
+      hook_event_name: "PreToolUse", session_id: "session-first-tool",
+      tool_name: "mcp__brainbase__brainbase_resolve_turn",
+    }, env);
+    expect(duplicateResolve.code).toBe(2);
+    expect(duplicateResolve.stderr).toContain("judgment_resolve_turn_duplicate");
     const laterTool = await runHook({
       hook_event_name: "PreToolUse", session_id: "session-first-tool",
       tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
@@ -357,6 +363,69 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(forwarded.at(-1)?.stop_hook_active).toBe(true);
     expect(forwarded.at(-1)?.last_assistant_message)
       .toBe(`${judgmentLine}\n${brainbaseLine}\n${repairLine}\n本文`);
+  });
+
+  it("does not start a second Stop repair after an internal repair succeeds", async () => {
+    const judgmentLine = "🧠 判断参照: 「確認して」を参照 → 運用依頼として対応 ✓";
+    const brainbaseLine = "📚 Brainbase検索: Graphで「mana」を検索 → 結果を取得 ✓";
+    const repairLine = "🛠️ Stop修復: 最終回答を1回差し戻し → 修復完了 ✓";
+    const forwarded: Array<Record<string, unknown>> = [];
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      forwarded.push(payload);
+      const stopCount = forwarded.filter((entry) => entry.hook_event_name === "Stop").length;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1", accepted: true, hook_event_name: payload.hook_event_name,
+        session_id: payload.session_id, turn_id: payload.turn_id,
+        receipt_id: `receipt-${payload.hook_event_name}-${stopCount}`,
+        ...(payload.hook_event_name === "UserPromptSubmit"
+          ? { route_resolution_sha256: "1".repeat(64) } : {}),
+        output: payload.hook_event_name === "UserPromptSubmit" ? {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit", additionalContext: "Judgment route resolved",
+          },
+        } : stopCount === 1 ? {
+          decision: "block",
+          reason: [judgmentLine, brainbaseLine, repairLine,
+            "監査行を回答の先頭へ追加してそのまま続けてください。"].join("\n"),
+        } : stopCount === 2 ? {
+          systemMessage: [judgmentLine, brainbaseLine, repairLine].join("\n"),
+        } : {
+          decision: "block",
+          reason: [judgmentLine, brainbaseLine, repairLine,
+            "mcp__brainbase__brainbase_resolve_turnを実行する"].join("\n"),
+        },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const env = {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    };
+
+    await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-stop-once" }, env);
+    const first = await runHook({
+      hook_event_name: "Stop", session_id: "session-stop-once", last_assistant_message: "本文",
+    }, env);
+    const second = await runHook({
+      hook_event_name: "Stop", session_id: "session-stop-once", last_assistant_message: "二回目の本文",
+    }, env);
+
+    expect(first.code).toBe(0);
+    expect(JSON.parse(first.stdout)).not.toHaveProperty("decision");
+    expect(second.code).toBe(0);
+    expect(JSON.parse(second.stdout).decision).toBe("block");
+    const stops = forwarded.filter((entry) => entry.hook_event_name === "Stop");
+    expect(stops).toHaveLength(3);
+    expect(stops.map((entry) => entry.stop_hook_active)).toEqual([false, true, true]);
   });
 
   it("preserves every receipt when Brainbase PostToolUse hooks complete concurrently", async () => {
@@ -1103,7 +1172,13 @@ describe("Brainbase judgment Hook forwarder", () => {
       hook_event_name: "UserPromptSubmit", session_id: sessionId, transcript_path: transcriptPath,
     }, env)).code).toBe(0);
 
-    const resolveInput = { turn_ref: "turn-ref-1", model_interpretation: { classification: "question" } };
+    const resolveInput = {
+      turn_ref: `${"a".repeat(64)}/${"b".repeat(64)}`,
+      model_interpretation: {
+        intent: "answer", domains: ["general"], action_kind: "none",
+        risk: "low", confidence: "confirmed", signals: [],
+      },
+    };
     const stateInput = { state: "completed", reason: "reply finalized" };
     await appendFile(transcriptPath, [
       {
