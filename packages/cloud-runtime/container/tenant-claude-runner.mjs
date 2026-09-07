@@ -2,6 +2,8 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 
 const HANDLE_PATTERN = /^tb_[A-Za-z0-9_-]{32,128}$/;
@@ -15,11 +17,53 @@ function validatedHandle(value) {
   return value;
 }
 
-async function requestBody(request) {
+function abortError(signal) {
+  return signal.reason instanceof Error ? signal.reason : new Error("request_aborted");
+}
+
+async function requestBody(request, signal) {
   if (request.method === "GET" || request.method === "HEAD") return undefined;
   const chunks = [];
-  for await (const chunk of request) chunks.push(Buffer.from(chunk));
+  for await (const chunk of request) {
+    if (signal.aborted) throw abortError(signal);
+    chunks.push(Buffer.from(chunk));
+  }
+  if (signal.aborted) throw abortError(signal);
   return chunks.length === 0 ? undefined : Buffer.concat(chunks);
+}
+
+function awaitWithAbort(value, signal, onLateValue) {
+  if (signal.aborted) {
+    void Promise.resolve(value).then(onLateValue, () => {});
+    return Promise.reject(abortError(signal));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      reject(abortError(signal));
+    };
+    const settle = (callback) => {
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(value).then(
+      (result) => {
+        if (signal.aborted) void onLateValue?.(result);
+        settle(() => resolve(result));
+      },
+      (error) => settle(() => reject(error)),
+    );
+  });
+}
+
+function cancelResponseBody(body, reason) {
+  if (!body || typeof body.cancel !== "function") return;
+  try {
+    const cancellation = body.cancel(reason);
+    if (cancellation && typeof cancellation.catch === "function") void cancellation.catch(() => {});
+  } catch {
+    // The body may already be locked by Readable.fromWeb or have been closed.
+  }
 }
 
 /**
@@ -30,8 +74,37 @@ async function requestBody(request) {
  */
 export async function startTenantAnthropicProxy({ tenantBoundaryHandle, fetchImpl = fetch }) {
   const handle = validatedHandle(tenantBoundaryHandle);
+  const activeRequests = new Set();
+  let closing = false;
+  let closePromise;
   const server = createServer(async (incoming, outgoing) => {
+    const controller = new AbortController();
+    let responseBody;
+    let responseFinished = false;
+    const abortRequest = (reason = new Error("provider_request_aborted")) => {
+      if (!controller.signal.aborted) controller.abort(reason);
+      cancelResponseBody(responseBody, controller.signal.reason);
+    };
+    const activeRequest = {
+      cancel: () => {
+        abortRequest(new Error("provider_proxy_closed"));
+        if (!incoming.destroyed) incoming.destroy();
+        if (!outgoing.destroyed) outgoing.destroy();
+      },
+    };
+    activeRequests.add(activeRequest);
+    const onIncomingAborted = () => abortRequest(new Error("provider_request_aborted"));
+    const onIncomingClose = () => {
+      if (!incoming.complete) onIncomingAborted();
+    };
+    const onOutgoingClose = () => {
+      if (!responseFinished && !outgoing.writableFinished && !closing) onIncomingAborted();
+    };
+    incoming.once("aborted", onIncomingAborted);
+    incoming.once("close", onIncomingClose);
+    outgoing.once("close", onOutgoingClose);
     try {
+      if (closing) throw new Error("provider_proxy_closed");
       const path = incoming.url ?? "/";
       const target = new URL(path, "https://api.anthropic.com");
       if (target.origin !== "https://api.anthropic.com") throw new Error("provider_target_invalid");
@@ -41,21 +114,44 @@ export async function startTenantAnthropicProxy({ tenantBoundaryHandle, fetchImp
         headers.set(name, Array.isArray(value) ? value.join(",") : value);
       }
       headers.set(BOUNDARY_HEADER, handle);
-      const body = await requestBody(incoming);
-      const response = await fetchImpl(target, {
+      const body = await requestBody(incoming, controller.signal);
+      const response = await awaitWithAbort(fetchImpl(target, {
         method: incoming.method ?? "GET",
         headers,
         ...(body ? { body } : {}),
         redirect: "manual",
-      });
+        signal: controller.signal,
+      }), controller.signal, (lateResponse) => cancelResponseBody(lateResponse?.body, controller.signal.reason));
+      responseBody = response.body;
+      if (controller.signal.aborted) throw abortError(controller.signal);
       outgoing.statusCode = response.status;
       response.headers.forEach((value, name) => {
         if (!["content-length", "transfer-encoding"].includes(name.toLowerCase())) outgoing.setHeader(name, value);
       });
-      outgoing.end(Buffer.from(await response.arrayBuffer()));
+      outgoing.flushHeaders();
+      if (!responseBody) {
+        outgoing.end();
+      } else {
+        await pipeline(Readable.fromWeb(responseBody), outgoing, { signal: controller.signal });
+      }
+      responseFinished = true;
     } catch {
-      outgoing.statusCode = 502;
-      outgoing.end("trusted_provider_forward_failed");
+      if (!controller.signal.aborted && !closing && !outgoing.destroyed) {
+        if (outgoing.headersSent) {
+          if (!outgoing.writableEnded) outgoing.destroy();
+        } else {
+          outgoing.statusCode = 502;
+          outgoing.end("trusted_provider_forward_failed");
+        }
+      } else if (!outgoing.destroyed && !outgoing.writableEnded) {
+        outgoing.destroy();
+      }
+    } finally {
+      responseFinished = true;
+      incoming.removeListener("aborted", onIncomingAborted);
+      incoming.removeListener("close", onIncomingClose);
+      outgoing.removeListener("close", onOutgoingClose);
+      activeRequests.delete(activeRequest);
     }
   });
   await new Promise((resolve, reject) => {
@@ -69,7 +165,20 @@ export async function startTenantAnthropicProxy({ tenantBoundaryHandle, fetchImp
   }
   return Object.freeze({
     baseUrl: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+    close: () => {
+      if (closePromise) return closePromise;
+      closing = true;
+      for (const activeRequest of activeRequests) activeRequest.cancel();
+      closePromise = new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error && error.code !== "ERR_SERVER_NOT_RUNNING") reject(error);
+          else resolve();
+        });
+        server.closeIdleConnections?.();
+        server.closeAllConnections?.();
+      });
+      return closePromise;
+    },
   });
 }
 

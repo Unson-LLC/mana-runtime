@@ -10,6 +10,25 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 describe("Cloudflare Claude runtime config", () => {
+  it("bounds Sonnet minutes thinking without changing routing or reply generation", () => {
+    for (const traceMeetingMinutes of [false, true]) {
+      const minutes = buildRuntimeClaudeCommand("meeting-minutes", { model: "sonnet" }, {
+        structuredOutput: "meeting-minutes", traceMeetingMinutes,
+      });
+      expect(minutes).toMatch(/^CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1 MAX_THINKING_TOKENS=2048 CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384 CLAUDE_CODE_EFFORT_LEVEL=medium node /);
+      expect(minutes).toContain("--json-schema");
+      expect(minutes).toContain("--strict-mcp-config < /tmp/meeting-minutes-prompt.txt");
+    }
+    for (const command of [
+      buildRuntimeClaudeCommand("reply", { model: "sonnet" }),
+      buildRuntimeClaudeCommand("meeting-task", { model: "sonnet" }),
+      buildRuntimeClaudeCommand("meeting-minutes", { model: "sonnet" }, { structuredOutput: "meeting-minutes-routing" }),
+      buildRuntimeClaudeCommand("meeting-minutes", { model: "opus", effort: "xhigh" }, { structuredOutput: "meeting-minutes" }),
+    ]) {
+      expect(command).not.toContain("MAX_THINKING_TOKENS");
+      expect(command).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+    }
+  });
   it("uses the diagnostic runner only for an explicitly traced meeting generation", () => {
     expect(buildRuntimeClaudeCommand("meeting-minutes", { model: "sonnet" }, { traceMeetingMinutes: true }))
       .toContain("node /tmp/meeting-minutes-trace-runner.mjs --");
