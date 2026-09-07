@@ -26,4 +26,17 @@ describe("reply requester configuration", () => {
     expect(t0).toContain("processReply: () => executeSharedReplyRuntime({");
     expect(t0).not.toContain("canonicalPersonId:");
   });
+
+  it("logs the three requester preparation boundaries before the reply pipeline", () => {
+    const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const sharedStart = source.indexOf("function executeSharedReplyRuntime(input: SharedReplyRuntimeInput)");
+    const sharedEnd = source.indexOf("export async function executeCompanyAuthorityReplyOperation(", sharedStart);
+    const shared = source.slice(sharedStart, sharedEnd);
+
+    expect(shared).toContain('event: "mana_reply_requester_stage"');
+    expect(shared).toContain('runRequesterStage("slack_profile"');
+    expect(shared).toContain('runRequesterStage("task_write_capability"');
+    expect(shared).toContain('runRequesterStage("graph_context"');
+    expect(shared).toContain('state: "started" | "succeeded" | "failed"');
+  });
 });

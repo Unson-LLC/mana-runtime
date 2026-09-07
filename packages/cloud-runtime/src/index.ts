@@ -2937,10 +2937,40 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       tenantCredentialFetchConfigured: true,
     },
     prepareRequester: async () => {
-      const profileResolution = await resolveSlackUserProfile({
+      const logRequesterStage = (
+        stage: "slack_profile" | "task_write_capability" | "graph_context",
+        state: "started" | "succeeded" | "failed",
+        error?: unknown,
+      ) => console.log(JSON.stringify({
+        event: "mana_reply_requester_stage",
+        event_id: event.eventId,
+        channel_id: event.channelId,
+        stage,
+        state,
+        ...(state === "failed" ? {
+          error_name: error instanceof Error ? error.name : "UnknownError",
+          error_code: error instanceof TenantBoundaryError ? error.code : undefined,
+          error_boundary: error instanceof TenantBoundaryError ? error.boundary : undefined,
+        } : {}),
+      }));
+      const runRequesterStage = async <T>(
+        stage: "slack_profile" | "task_write_capability" | "graph_context",
+        operation: () => Promise<T>,
+      ): Promise<T> => {
+        logRequesterStage(stage, "started");
+        try {
+          const result = await operation();
+          logRequesterStage(stage, "succeeded");
+          return result;
+        } catch (error) {
+          logRequesterStage(stage, "failed", error);
+          throw error;
+        }
+      };
+      const profileResolution = await runRequesterStage("slack_profile", () => resolveSlackUserProfile({
         userId: event.userId ?? "",
         fetchImpl: tenantCredentialFetch,
-      });
+      }));
       // users.info is enrichment, not the authorization boundary. Some Slack
       // installations intentionally omit users:read. Canonical Graph identity
       // resolution remains mandatory for ordinary T0 callers; A0 uses only its
@@ -2983,14 +3013,18 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
         || taskWritePlacement.projectCodes.length !== placement.projectCodes.length) {
         throw new ReplyPipelineError("task_write_placement_scope_mismatch");
       }
-      const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
+      const { taskWriteEnabled, taskWriteCapability } = await runRequesterStage("task_write_capability", () => issueTaskWriteRequestContext(
         event,
         env,
         Date.now(),
         taskWritePlacement,
         requesterResolution.personId,
-      );
-      const graphContext = await hydrateGraphContext(event, canonicalProjectId, graphOptions);
+      ));
+      const graphContext = await runRequesterStage("graph_context", () => hydrateGraphContext(
+        event,
+        canonicalProjectId,
+        graphOptions,
+      ));
       if (graphContext.status === "unavailable") {
         throw new ReplyPipelineError("graph_context_unavailable");
       }
