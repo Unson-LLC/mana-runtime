@@ -616,6 +616,21 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("critical-reviewer");
     expect(prompt).not.toContain("global private MEMORY");
   });
+  it("routes personal KG registration and readback through the owner-scoped gateway tools", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      capabilities: { mcp: ["gateway"], gatewayTools: ["search_personal_kg", "register_personal_kg"] },
+    });
+
+    await processReplyEvent(fs, event({ text: "この内容を私の個人KGに登録してから検索して" }), options);
+
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    expect(prompt).toContain("一般のBrainbase検索で代用せず");
+    expect(prompt).toContain("register_personal_kg");
+    expect(prompt).toContain("成功応答のevent_id");
+    expect(prompt).toContain("search_personal_kg");
+    expect(prompt).toContain("返されたitemsに登録event_idが含まれることを確認");
+  });
   it("binds the Slack requester person to 私のタスク searches without asking for identity", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({
