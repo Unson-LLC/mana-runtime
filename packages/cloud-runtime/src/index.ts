@@ -3026,7 +3026,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
         graphOptions,
       ));
       if (graphContext.status === "unavailable") {
-        throw new ReplyPipelineError("graph_context_unavailable");
+        throw new ReplyPipelineError(`graph_context_unavailable.${graphContext.reason}`);
       }
       return {
         requesterIdentity: {
