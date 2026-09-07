@@ -23,6 +23,7 @@ const runtimeMocks = vi.hoisted(() => ({
   getWorkspace: vi.fn(),
   withDisposableResource: vi.fn(),
   brokerFetch: vi.fn(),
+  hydrateGraphContext: vi.fn(),
   getSandbox: vi.fn(),
   mutateReplyEvent: false,
   preparedRequesters: [] as Array<Record<string, unknown>>,
@@ -98,7 +99,7 @@ vi.mock("../brainbase-graph-runtime.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../brainbase-graph-runtime.js")>();
   return {
     ...actual,
-    hydrateGraphContext: vi.fn().mockResolvedValue({ status: "empty", content: "" }),
+    hydrateGraphContext: runtimeMocks.hydrateGraphContext,
   };
 });
 vi.mock("../multitenancy/tenant-credential-fetch.js", async (importOriginal) => {
@@ -406,6 +407,8 @@ function runtimeEnv(overrides: Record<string, unknown> = {}): RuntimeEnv {
       agent: { model: "sonnet" },
     }]),
     BRAINBASE_COMPANY_AUTHORITY_BASE_URL: "https://authority.example.com/",
+    BRAINBASE_GRAPH_API_BASE_URL: "https://graph.example.com/",
+    BRAINBASE_GRAPH_API_TOKEN: "graph-service-token",
     BRAINBASE_COMPANY_AUTHORITY_EXPECTED_DEPLOYMENT_ID: deploymentId,
     BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON: JSON.stringify({
       kty: "OKP", crv: "Ed25519", x: "a".repeat(43),
@@ -448,6 +451,7 @@ describe("Company Authority runtime.execute reply executor", () => {
     runtimeMocks.slackRequests.length = 0;
     runtimeMocks.readbackInputs.length = 0;
     runtimeMocks.mutateReplyEvent = false;
+    runtimeMocks.hydrateGraphContext.mockResolvedValue({ status: "empty", content: "" });
     runtimeMocks.preparedRequesters.length = 0;
     runtimeMocks.workspaceHandle = { fs: runtimeMocks.workspaceFs };
     runtimeMocks.workspaceStub.claimRuntimeEvent.mockResolvedValue({
@@ -691,6 +695,14 @@ describe("Company Authority runtime.execute reply executor", () => {
     expect(runtimeMocks.replyInputs[0]?.taskSearch).toMatchObject({
       projectCodes: "mana",
     });
+    expect(runtimeMocks.hydrateGraphContext).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: "EvCompanyAuthorityReply" }),
+      "mana",
+      {
+        baseUrl: "https://graph.example.com/",
+        token: "graph-service-token",
+      },
+    );
   });
 
   it("keeps an unknown readback unresolved and does not resend an existing claim", async () => {
