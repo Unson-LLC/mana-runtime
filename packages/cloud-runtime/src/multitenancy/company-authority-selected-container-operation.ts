@@ -65,10 +65,14 @@ export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
           ...(capture_recovery === undefined ? {} : { capture_recovery }),
         });
       } catch (error) {
+        const safeErrorCode = error instanceof Error
+          && /^[a-z0-9_.-]{1,120}$/i.test(error.message)
+          ? error.message
+          : "UPSTREAM_UNAVAILABLE";
         console.error(JSON.stringify({
           event: "company_authority_provider_failed",
           correlation_id: envelope.correlation_id,
-          code: error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE",
+          code: error instanceof TenantBoundaryError ? error.code : safeErrorCode,
           ...(error instanceof TenantBoundaryError ? {
             boundary: error.boundary,
             ...(typeof error.details?.phase === "string" ? { phase: error.details.phase } : {}),
