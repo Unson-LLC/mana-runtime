@@ -373,10 +373,10 @@ function buildPrompt(
     ...(personalKnowledgeSearchEnabled || personalKnowledgeRegistrationEnabled ? [
       "本人専用の個人KGに関する依頼では、一般のBrainbase検索で代用せず、許可された個人KG専用toolを使ってください。",
       ...(personalKnowledgeRegistrationEnabled ? [
-        "個人KGへの登録を依頼された場合はregister_personal_kgを使い、成功応答のevent_idを確認してから完了を報告してください。",
+        "個人KGへの登録を依頼された場合は、MCP toolの完全名 mcp__gateway__register_personal_kg を必ず使い、成功応答のevent_idを確認してから完了を報告してください。",
       ] : []),
       ...(personalKnowledgeSearchEnabled ? [
-        "個人KGの検索を依頼された場合はsearch_personal_kgを使ってください。登録後の検索も依頼された場合は、登録した本文を検索語にして再検索し、返されたitemsに登録event_idが含まれることを確認してください。",
+        "個人KGの検索を依頼された場合は、MCP toolの完全名 mcp__gateway__search_personal_kg を必ず使ってください。登録後の検索も依頼された場合は、登録した本文を検索語にして再検索し、返されたitemsに登録event_idが含まれることを確認してください。",
       ] : []),
       "tool error、空応答、または再検索で登録event_idを確認できない場合は成功と断定しないでください。",
     ] : []),

@@ -626,9 +626,9 @@ describe("TechKnight Slack reply pipeline", () => {
 
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("一般のBrainbase検索で代用せず");
-    expect(prompt).toContain("register_personal_kg");
+    expect(prompt).toContain("mcp__gateway__register_personal_kg");
     expect(prompt).toContain("成功応答のevent_id");
-    expect(prompt).toContain("search_personal_kg");
+    expect(prompt).toContain("mcp__gateway__search_personal_kg");
     expect(prompt).toContain("返されたitemsに登録event_idが含まれることを確認");
   });
   it("binds the Slack requester person to 私のタスク searches without asking for identity", async () => {
