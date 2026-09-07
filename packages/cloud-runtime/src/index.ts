@@ -2917,7 +2917,15 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
     trace,
     postReply,
   } = input;
-  const canonicalProjectId = input.canonicalProjectId ?? placement.projectCodes[0];
+  const runtimePlacement = env.RUNTIME_PLACEMENTS_JSON
+    ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
+      .find((candidate) => candidate.placementId === placement.placementId)
+    : placement;
+  if (!runtimePlacement || runtimePlacement.channelId !== placement.channelId
+    || runtimePlacement.projectCodes.length !== placement.projectCodes.length) {
+    throw new ReplyPipelineError("runtime_placement_scope_mismatch");
+  }
+  const placementProjectCode = runtimePlacement.projectCodes[0];
   const canonicalPersonId = input.canonicalPersonId;
   // A0's accepted actor is already canonical. Only the ordinary T0 caller
   // constructs the legacy resolver; A0 must never regenerate identity here.
@@ -2931,7 +2939,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       tenantId: runtimeTenantId,
       workspaceId: runtimeWorkspaceId,
       channelId: placement.channelId,
-      projectCodes: input.canonicalProjectId ?? placement.projectCodes.join(","),
+      projectCodes: runtimePlacement.projectCodes.join(","),
       taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
       brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
       tenantCredentialFetchConfigured: true,
@@ -3005,24 +3013,16 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       // The Task API uses placement project codes, while Company Authority uses
       // canonical project IDs. Issue the write capability from the configured
       // placement so the broker can authorize the code sent in the Task body.
-      const taskWritePlacement = env.RUNTIME_PLACEMENTS_JSON
-        ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
-          .find((candidate) => candidate.placementId === placement.placementId)
-        : placement;
-      if (!taskWritePlacement || taskWritePlacement.channelId !== placement.channelId
-        || taskWritePlacement.projectCodes.length !== placement.projectCodes.length) {
-        throw new ReplyPipelineError("task_write_placement_scope_mismatch");
-      }
       const { taskWriteEnabled, taskWriteCapability } = await runRequesterStage("task_write_capability", () => issueTaskWriteRequestContext(
         event,
         env,
         Date.now(),
-        taskWritePlacement,
+        runtimePlacement,
         requesterResolution.personId,
       ));
       const graphContext = await runRequesterStage("graph_context", () => hydrateGraphContext(
         event,
-        canonicalProjectId,
+        placementProjectCode,
         graphOptions,
       ));
       if (graphContext.status === "unavailable") {
@@ -3049,7 +3049,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       tenantBoundaryExpiresAt,
       tenantBoundaryExpiresAtNow,
       claudeRuntime,
-      brainbaseProjectCode: canonicalProjectId,
+      brainbaseProjectCode: placementProjectCode,
       runtimeContext: placement.runtimeContext
         ? { ...placement.runtimeContext, escalationEmployee: placement.agent?.escalationEmployee }
         : undefined,
