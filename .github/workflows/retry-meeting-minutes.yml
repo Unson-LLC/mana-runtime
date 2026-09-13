@@ -164,15 +164,19 @@ jobs:
                   registeredCount: (.taskRegistration.registeredCount | number_or_null),
                   pendingPresent: (.taskRegistration.pendingPresent | bool_or_null),
                   hasFailure: (if .taskRegistration | type == "object" then .taskRegistration.failure != null else null end),
-                  failure: (if .taskRegistration.failure | type == "object" then {
-                    stage: (.stage | one_of(["task_registration","task_board","task_card"])),
-                    failurePoint: (.failurePoint | one_of(["assignee_resolution","task_create","task_scope_update"])),
-                    code: (if .code | type == "string" and test("^[A-Za-z][A-Za-z0-9_]{1,96}$") then . else null end),
-                    status: (.status | number_or_null),
-                    boundary: (if .boundary | type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{0,119}$") then . else null end),
-                    scopeReason: (if .scopeReason | type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{0,119}$") then . else null end),
-                    message: (if .message | type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{1,128}$") then . else null end),
-                    failedAt: (.failedAt | timestamp)
+                  failure: (if (.taskRegistration.failure | type) == "object" then {
+                    stage: (.taskRegistration.failure.stage | one_of(["task_registration","task_board","task_card"])),
+                    failurePoint: (.taskRegistration.failure.failurePoint | one_of(["assignee_resolution","task_create","task_scope_update"])),
+                    code: (.taskRegistration.failure.code |
+                      if type == "string" and test("^[A-Za-z][A-Za-z0-9_]{1,96}$") then . else null end),
+                    status: (.taskRegistration.failure.status | number_or_null),
+                    boundary: (.taskRegistration.failure.boundary |
+                      if type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{0,119}$") then . else null end),
+                    scopeReason: (.taskRegistration.failure.scopeReason |
+                      if type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{0,119}$") then . else null end),
+                    message: (.taskRegistration.failure.message |
+                      if type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{1,128}$") then . else null end),
+                    failedAt: (.taskRegistration.failure.failedAt | timestamp)
                   } else null end)
                 },
                 generation: {
