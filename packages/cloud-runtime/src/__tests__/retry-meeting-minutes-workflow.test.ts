@@ -23,6 +23,8 @@ interface RunFixtureOptions {
   completedRunReceipt?: Record<string, unknown>;
   completedCheckpoint?: Record<string, unknown>;
   outcomeCaseIdInput?: string;
+  operation?: "retry" | "status";
+  statusResponse?: Record<string, unknown>;
 }
 
 function extractRetryStep(workflow: string): string {
@@ -40,14 +42,16 @@ function runFixture(options: RunFixtureOptions = {}): {
   baseline: Record<string, unknown>;
   completed: Record<string, unknown>;
 } {
-  const baseline: Record<string, unknown> = {
+  const baseline: Record<string, unknown> = options.statusResponse ?? {
     runId: "run_001",
     status: "failed",
     diagnostics: { failedAt: "2026-09-07T00:00:00.000Z" },
     sourceStatus: { projectedAt: "2026-09-07T00:00:01.000Z" },
   };
-  if (options.baselineOutcomeCaseId) baseline.outcomeCaseId = options.baselineOutcomeCaseId;
-  if (options.baselineOutcomeCaseId) baseline.runReceipt = { caseId: options.baselineOutcomeCaseId, status: "pending" };
+  if (!options.statusResponse) {
+    if (options.baselineOutcomeCaseId) baseline.outcomeCaseId = options.baselineOutcomeCaseId;
+    if (options.baselineOutcomeCaseId) baseline.runReceipt = { caseId: options.baselineOutcomeCaseId, status: "pending" };
+  }
 
   const completed: Record<string, unknown> = {
     runId: "run_001",
@@ -153,7 +157,7 @@ printf '200'
         TENANT_ID: "tenant_001",
         WORKSPACE_ID: "T01ABC",
         OUTCOME_CASE_ID: options.outcomeCaseIdInput ?? "",
-        OPERATION: "retry",
+        OPERATION: options.operation ?? "retry",
         RETRY_REASON: "workflow test",
         SANDBOX_PROBE_TOKEN: "probe-token",
         GITHUB_STEP_SUMMARY: summaryPath,
@@ -233,5 +237,55 @@ describe("retry meeting-minutes workflow", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Fresh retry did not satisfy the completion contract before the polling deadline");
+  });
+
+  it("preserves nested task-registration failure details during status readback", async () => {
+    const result = await runRetryWorkflow({
+      operation: "status",
+      statusResponse: {
+        runId: "run_001",
+        status: "failed",
+        updatedAt: "2026-09-14T00:00:00.000Z",
+        taskRegistration: {
+          registeredCount: 0,
+          pendingPresent: true,
+          failure: {
+            stage: "task_registration",
+            failurePoint: "task_create",
+            code: "TASK_API_REJECTED",
+            status: 403,
+            boundary: "task_api",
+            scopeReason: "project_code_not_allowed",
+            message: "project_code_not_allowed",
+            failedAt: "2026-09-14T00:00:01.000Z",
+          },
+        },
+        stage: "task_board",
+        failurePoint: "assignee_resolution",
+        code: "ROOT_SPOOF",
+        boundary: "root_spoof",
+        scopeReason: "root_spoof",
+        message: "root_spoof",
+        failedAt: "2026-09-14T00:00:02.000Z",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const receipt = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(receipt.taskRegistration).toEqual({
+      registeredCount: 0,
+      pendingPresent: true,
+      hasFailure: true,
+      failure: {
+        stage: "task_registration",
+        failurePoint: "task_create",
+        code: "TASK_API_REJECTED",
+        status: 403,
+        boundary: "task_api",
+        scopeReason: "project_code_not_allowed",
+        message: "project_code_not_allowed",
+        failedAt: "2026-09-14T00:00:01.000Z",
+      },
+    });
   });
 });
