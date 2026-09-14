@@ -1,6 +1,5 @@
 export const FREEE_MCP_PROXY_HOST = "freee-mcp.internal";
 export const FREEE_MCP_PROXY_PATH = "/mcp";
-export const FREEE_MCP_DEFAULT_BASE_URL = "https://mcp.freee.co.jp";
 
 export interface FreeeMcpProxyEnv {
   FREEE_MCP_BASE_URL?: string;
@@ -14,52 +13,69 @@ const READ_ONLY_TOOLS = new Set([
   "freee_list_companies",
   "freee_current_user",
   "freee_server_info",
-  // Changes only the MCP session/account selection; it does not mutate freee business data.
-  "freee_set_current_company",
 ]);
 
+const LIFECYCLE_METHODS = new Set([
+  "initialize",
+  "notifications/initialized",
+  "ping",
+  "tools/list",
+]);
+
+const MCP_HEADER_ALLOWLIST = new Set([
+  "accept",
+  "content-type",
+  "mcp-session-id",
+  "mcp-protocol-version",
+]);
+
+const MAX_FILTERED_RESPONSE_BYTES = 4 * 1024 * 1024;
+
 type McpBodyInspection = {
-  readOnly: boolean;
+  allowed: boolean;
   requestsToolsList: boolean;
 };
 
 function inspectRequest(value: unknown): McpBodyInspection {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { readOnly: true, requestsToolsList: false };
+    return { allowed: false, requestsToolsList: false };
   }
   const rpc = value as { method?: unknown; params?: unknown };
-  if (rpc.method === "tools/list") return { readOnly: true, requestsToolsList: true };
-  if (rpc.method !== "tools/call") return { readOnly: true, requestsToolsList: false };
+  if (typeof rpc.method !== "string") return { allowed: false, requestsToolsList: false };
+  if (rpc.method === "tools/list") return { allowed: true, requestsToolsList: true };
+  if (LIFECYCLE_METHODS.has(rpc.method)) return { allowed: true, requestsToolsList: false };
+  if (rpc.method !== "tools/call") return { allowed: false, requestsToolsList: false };
   if (!rpc.params || typeof rpc.params !== "object" || Array.isArray(rpc.params)) {
-    return { readOnly: false, requestsToolsList: false };
+    return { allowed: false, requestsToolsList: false };
   }
   const name = (rpc.params as { name?: unknown }).name;
   return {
-    readOnly: typeof name === "string" && READ_ONLY_TOOLS.has(name),
+    allowed: typeof name === "string" && READ_ONLY_TOOLS.has(name),
     requestsToolsList: false,
   };
 }
 
-function inspectMcpBody(body: string): McpBodyInspection {
+function inspectMcpBody(body: string): McpBodyInspection | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    // Let the upstream MCP server return the canonical JSON-RPC parse error.
-    return { readOnly: true, requestsToolsList: false };
+    return null;
   }
   if (!Array.isArray(parsed)) return inspectRequest(parsed);
+  if (parsed.length === 0) return { allowed: false, requestsToolsList: false };
   return parsed.reduce<McpBodyInspection>((state, child) => {
     const inspected = inspectRequest(child);
     return {
-      readOnly: state.readOnly && inspected.readOnly,
+      allowed: state.allowed && inspected.allowed,
       requestsToolsList: state.requestsToolsList || inspected.requestsToolsList,
     };
-  }, { readOnly: true, requestsToolsList: false });
+  }, { allowed: true, requestsToolsList: false });
 }
 
 function configuredBaseUrl(value: string | undefined): string | null {
-  const raw = value?.trim() || FREEE_MCP_DEFAULT_BASE_URL;
+  const raw = value?.trim();
+  if (!raw) return null;
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return null;
@@ -90,31 +106,61 @@ function filterTools(value: unknown): unknown {
   };
 }
 
-function filteredHeaders(response: Response): Headers {
-  const headers = new Headers(response.headers);
-  headers.delete("content-length");
+function allowedHeaders(source: Headers): Headers {
+  const headers = new Headers();
+  for (const [name, value] of source.entries()) {
+    if (MCP_HEADER_ALLOWLIST.has(name.toLowerCase())) headers.set(name, value);
+  }
   return headers;
+}
+
+async function readLimitedText(response: Response): Promise<string | null> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_FILTERED_RESPONSE_BYTES) return null;
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_FILTERED_RESPONSE_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
 }
 
 async function filterToolsListResponse(response: Response): Promise<Response> {
   if (!response.ok) return response;
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const text = await readLimitedText(response);
+  if (text === null) return Response.json({ error: "freee_mcp_response_too_large" }, { status: 502 });
   if (contentType.includes("application/json")) {
     let payload: unknown;
     try {
-      payload = JSON.parse(await response.text());
+      payload = JSON.parse(text);
     } catch {
       return Response.json({ error: "freee_mcp_invalid_tools_list" }, { status: 502 });
     }
     return new Response(JSON.stringify(filterTools(payload)), {
       status: response.status,
-      headers: filteredHeaders(response),
+      headers: allowedHeaders(response.headers),
     });
   }
   if (contentType.includes("text/event-stream")) {
-    const text = await response.text();
-    const lines = text.split("\n");
-    const filtered = [];
+    const newline = text.includes("\r\n") ? "\r\n" : "\n";
+    const lines = text.split(/\r?\n/u);
+    const filtered: string[] = [];
     for (const line of lines) {
       if (!line.startsWith("data:")) {
         filtered.push(line);
@@ -131,9 +177,9 @@ async function filterToolsListResponse(response: Response): Promise<Response> {
         return Response.json({ error: "freee_mcp_invalid_tools_list" }, { status: 502 });
       }
     }
-    return new Response(filtered.join("\n"), {
+    return new Response(filtered.join(newline), {
       status: response.status,
-      headers: filteredHeaders(response),
+      headers: allowedHeaders(response.headers),
     });
   }
   return Response.json({ error: "freee_mcp_invalid_tools_list_content_type" }, { status: 502 });
@@ -142,7 +188,7 @@ async function filterToolsListResponse(response: Response): Promise<Response> {
 export async function handleFreeeMcpProxyRequest(
   request: Request,
   env: FreeeMcpProxyEnv,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch,
 ): Promise<Response> {
   const url = new URL(request.url);
   if (url.hostname !== FREEE_MCP_PROXY_HOST || url.pathname !== FREEE_MCP_PROXY_PATH || request.method !== "POST") {
@@ -154,25 +200,19 @@ export async function handleFreeeMcpProxyRequest(
 
   const body = await request.clone().text();
   const inspection = inspectMcpBody(body);
-  if (!inspection.readOnly) {
+  if (!inspection) return Response.json({ error: "freee_mcp_invalid_json" }, { status: 400 });
+  if (!inspection.allowed) {
     return Response.json({
       error: "freee_mcp_read_only",
-      message: "This Mana connection allows freee read operations only.",
+      message: "This Mana connection allows only explicitly approved freee read operations.",
     }, { status: 403 });
   }
 
-  const headers = new Headers(request.headers);
-  headers.delete("authorization");
-  headers.delete("proxy-authorization");
-  headers.delete("cookie");
-  headers.delete("content-length");
-
   const response = await fetchImpl(`${baseUrl}${FREEE_MCP_PROXY_PATH}`, {
     method: "POST",
-    headers,
+    headers: allowedHeaders(request.headers),
     body,
     redirect: "manual",
-    signal: AbortSignal.timeout(120_000),
   });
   if (response.status >= 300 && response.status < 400) {
     return Response.json({ error: "freee_mcp_redirect_rejected" }, { status: 502 });
