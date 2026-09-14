@@ -49,6 +49,70 @@ describe("freee MCP proxy", () => {
     },
   );
 
+  it("filters write-capable tools out of JSON tools/list discovery", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          { name: "freee_api_get", description: "read" },
+          { name: "freee_api_post", description: "write" },
+          { name: "freee_api_delete", description: "delete" },
+          { name: "freee_current_user", description: "whoami" },
+        ],
+      },
+    })) as unknown as typeof fetch;
+
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      {},
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          { name: "freee_api_get", description: "read" },
+          { name: "freee_current_user", description: "whoami" },
+        ],
+      },
+    });
+  });
+
+  it("filters write-capable tools out of SSE tools/list discovery", async () => {
+    const upstream = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { tools: [{ name: "freee_api_get" }, { name: "freee_api_patch" }] },
+    };
+    const fetchImpl = vi.fn(async () => new Response(`event: message\ndata: ${JSON.stringify(upstream)}\n\n`, {
+      headers: { "content-type": "text/event-stream" },
+    })) as unknown as typeof fetch;
+
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      {},
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { tools: [{ name: "freee_api_get" }] },
+    }));
+    expect(await (async () => "")()).not.toContain("freee_api_patch");
+  });
+
   it("allows MCP lifecycle traffic and rejects redirects", async () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } })) as unknown as typeof fetch;
     const response = await handleFreeeMcpProxyRequest(
