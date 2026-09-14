@@ -108,9 +108,9 @@ function filterTools(value: unknown): unknown {
 
 function allowedHeaders(source: Headers): Headers {
   const headers = new Headers();
-  for (const [name, value] of source.entries()) {
+  source.forEach((value, name) => {
     if (MCP_HEADER_ALLOWLIST.has(name.toLowerCase())) headers.set(name, value);
-  }
+  });
   return headers;
 }
 
