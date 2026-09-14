@@ -38,6 +38,7 @@ export interface BrainbaseTrustedProviderForwarderEnv {
   BRAINBASE_GRAPH_API_BASE_URL?: string;
   BRAINBASE_MCP_BASE_URL?: string;
   GOOGLE_DRIVE_MCP_BASE_URL?: string;
+  FREEE_MCP_BASE_URL?: string;
   NOCODB_URL?: string;
 }
 
@@ -315,6 +316,10 @@ async function mapProviderRequest(
   const drivePath = relativePath(url, configuredBase(env.GOOGLE_DRIVE_MCP_BASE_URL));
   if (drivePath === "/mcp" && method === "POST") {
     return { provider_operation: "google_drive.mcp.post", request: addBody({}) };
+  }
+  const freeePath = relativePath(url, configuredBase(env.FREEE_MCP_BASE_URL ?? "https://mcp.freee.co.jp"));
+  if (freeePath === "/mcp" && method === "POST") {
+    return { provider_operation: "freee.mcp.post", request: addBody({}) };
   }
   deny("credential_lease", "PROVIDER_OPERATION_UNSUPPORTED");
 }
