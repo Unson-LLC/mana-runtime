@@ -237,7 +237,14 @@ describe("会社別Cloudflare deployment", () => {
       { placementId: "minutes-zeims", channelId: "C0BKE4CM25V", projectCodes: ["zeims"], taskBoardEnabled: true },
       { placementId: "minutes-ncom-catalyst", channelId: "C0BKP89E79R", projectCodes: ["ncom"], taskBoardEnabled: true },
       { placementId: "minutes-legal-affairs", channelId: "C0BKZ6CF3J8", projectCodes: ["unson"], taskBoardEnabled: true },
-      { placementId: "minutes-cursorvers", channelId: "C0BHVFJGFK3", projectCodes: ["unson"], taskBoardEnabled: true },
+      {
+        placementId: "minutes-cursorvers",
+        channelId: "C0BHVFJGFK3",
+        projectCodes: ["unson"],
+        taskBoardEnabled: true,
+        audience: { type: "operator", allowedUserIds: ["U08SKE17CGJ"] },
+        respondTo: { im: "never", mpim: "never", channel: "mention", engagedThreads: true },
+      },
       { placementId: "minutes-kartz", channelId: "C0BQA5BGTEH", projectCodes: ["kartz"], taskBoardEnabled: true },
       { placementId: "minutes-unson-board", channelId: "C0BKXCVSDCH", projectCodes: ["unson"], taskBoardEnabled: true },
       {
@@ -312,6 +319,17 @@ describe("会社別Cloudflare deployment", () => {
       workspace_id: "T0882T8N9UH",
       channel_id: "C0BMNSP6C80",
       authenticated_subject_id: "U088D1HBY6L",
+    });
+  });
+
+  it("allows Otawara to mention Mana only in the Cursorvers channel", () => {
+    expect(JSON.parse(unson.vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON)).toContainEqual({
+      workspace_id: "T0882T8N9UH",
+      channel_id: "C0BHVFJGFK3",
+      authenticated_subject_id: "U08SKE17CGJ",
+    });
+    expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)).toMatchObject({
+      "minutes-cursorvers": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
     });
   });
 
@@ -610,6 +628,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       "biz-meeting-router": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
       "minutes-ncom-catalyst": ["prj_01KGHVCMA6R6A9MEMGKHRXQ5J0"],
+      "minutes-cursorvers": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
       "mana-dev-biz": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
       "unson-sato": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
     });
