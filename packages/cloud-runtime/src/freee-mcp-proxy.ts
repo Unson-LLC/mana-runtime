@@ -18,14 +18,17 @@ const READ_ONLY_TOOLS = new Set([
 const LIFECYCLE_METHODS = new Set([
   "initialize",
   "notifications/initialized",
+  "notifications/cancelled",
   "ping",
   "tools/list",
 ]);
 
+// The final Brainbase terminator owns the upstream freee session. Mana only
+// carries protocol-neutral headers to the internal endpoint; upstream session
+// identifiers must never be exposed to the sandbox.
 const MCP_HEADER_ALLOWLIST = new Set([
   "accept",
   "content-type",
-  "mcp-session-id",
   "mcp-protocol-version",
 ]);
 
@@ -36,12 +39,23 @@ type McpBodyInspection = {
   requestsToolsList: boolean;
 };
 
+function isJsonRpcResponse(value: Record<string, unknown>): boolean {
+  if (value.jsonrpc !== "2.0" || Object.hasOwn(value, "method")) return false;
+  const id = value.id;
+  if (!(id === null || typeof id === "string" || typeof id === "number")) return false;
+  const hasResult = Object.hasOwn(value, "result");
+  const hasError = Object.hasOwn(value, "error");
+  return hasResult !== hasError;
+}
+
 function inspectRequest(value: unknown): McpBodyInspection {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { allowed: false, requestsToolsList: false };
   }
-  const rpc = value as { method?: unknown; params?: unknown };
-  if (typeof rpc.method !== "string") return { allowed: false, requestsToolsList: false };
+  const rpc = value as Record<string, unknown>;
+  if (typeof rpc.method !== "string") {
+    return { allowed: isJsonRpcResponse(rpc), requestsToolsList: false };
+  }
   if (rpc.method === "tools/list") return { allowed: true, requestsToolsList: true };
   if (LIFECYCLE_METHODS.has(rpc.method)) return { allowed: true, requestsToolsList: false };
   if (rpc.method !== "tools/call") return { allowed: false, requestsToolsList: false };
@@ -114,6 +128,14 @@ function allowedHeaders(source: Headers): Headers {
   return headers;
 }
 
+function normalizeResponse(response: Response): Response {
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: allowedHeaders(response.headers),
+  });
+}
+
 async function readLimitedText(response: Response): Promise<string | null> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_FILTERED_RESPONSE_BYTES) return null;
@@ -141,7 +163,7 @@ async function readLimitedText(response: Response): Promise<string | null> {
 }
 
 async function filterToolsListResponse(response: Response): Promise<Response> {
-  if (!response.ok) return response;
+  if (!response.ok) return normalizeResponse(response);
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   const text = await readLimitedText(response);
   if (text === null) return Response.json({ error: "freee_mcp_response_too_large" }, { status: 502 });
@@ -217,7 +239,9 @@ export async function handleFreeeMcpProxyRequest(
   if (response.status >= 300 && response.status < 400) {
     return Response.json({ error: "freee_mcp_redirect_rejected" }, { status: 502 });
   }
-  return inspection.requestsToolsList ? filterToolsListResponse(response) : response;
+  return inspection.requestsToolsList
+    ? filterToolsListResponse(response)
+    : normalizeResponse(response);
 }
 
 export { READ_ONLY_TOOLS as FREEE_MCP_READ_ONLY_TOOLS };
