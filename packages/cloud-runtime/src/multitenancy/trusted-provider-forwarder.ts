@@ -38,7 +38,6 @@ export interface BrainbaseTrustedProviderForwarderEnv {
   BRAINBASE_GRAPH_API_BASE_URL?: string;
   BRAINBASE_MCP_BASE_URL?: string;
   GOOGLE_DRIVE_MCP_BASE_URL?: string;
-  FREEE_MCP_BASE_URL?: string;
   NOCODB_URL?: string;
 }
 
@@ -249,11 +248,11 @@ async function mapProviderRequest(
       if (operation) return { provider_operation: `nocodb.records.${operation}`, request: addBody(withQuery(url, { path_params })) };
     }
     if (segments.slice(0, 4).join("/") === "api/v2/meta/bases" && segments[5] === "tables" && segments.length === 6 && method === "GET") {
-      return { provider_operation: "nocodb.tables.list", request: { path_params: { project: segments[4] } } };
+      return { provider_operation: "nocodb.tables.list", request: { path_params: { project: segments[4] } };
     }
     if (segments.slice(0, 3).join("/") === "api/v2/meta" && segments.length === 5) {
       if (segments[3] === "tables" && method === "GET") {
-        return { provider_operation: "nocodb.tables.get", request: { path_params: { table: segments[4] } } };
+        return { provider_operation: "nocodb.tables.get", request: { path_params: { table: segments[4] } };
       }
       if (segments[3] === "columns" && method === "PATCH") {
         return { provider_operation: "nocodb.columns.update", request: addBody({ path_params: { column: segments[4] } }) };
@@ -316,10 +315,6 @@ async function mapProviderRequest(
   const drivePath = relativePath(url, configuredBase(env.GOOGLE_DRIVE_MCP_BASE_URL));
   if (drivePath === "/mcp" && method === "POST") {
     return { provider_operation: "google_drive.mcp.post", request: addBody({}) };
-  }
-  const freeePath = relativePath(url, configuredBase(env.FREEE_MCP_BASE_URL ?? "https://mcp.freee.co.jp"));
-  if (freeePath === "/mcp" && method === "POST") {
-    return { provider_operation: "freee.mcp.post", request: addBody({}) };
   }
   deny("credential_lease", "PROVIDER_OPERATION_UNSUPPORTED");
 }
