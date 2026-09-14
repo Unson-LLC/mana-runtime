@@ -57,6 +57,14 @@ export function buildRuntimeMcpConfig(capabilities: {
       };
       continue;
     }
+    if (name === "freee") {
+      mcpServers[name] = {
+        type: "http",
+        url: "https://freee-mcp.internal/mcp",
+        headers: { "x-mana-tenant-boundary-handle": tenantBoundaryHandle },
+      };
+      continue;
+    }
     const path = SERVER_PATHS[name as keyof typeof SERVER_PATHS];
     if (!path) throw new RuntimeMcpConfigError("runtime_mcp_not_supported");
     mcpServers[name] = {
