@@ -244,6 +244,18 @@ describe("tenant Slack runtime wiring", () => {
     expect(selection).toContain("expectedScope, verifier, now");
   });
 
+  it("persists selection recovery authority before enqueueing the selection", () => {
+    const interactionStart = source.indexOf("return handleMeetingMinutesInteractionEntrypoint(");
+    const interactionEnd = source.indexOf("if (request.method === \"POST\" && url.pathname === \"/slack/events\")", interactionStart);
+    const interaction = source.slice(interactionStart, interactionEnd);
+    const persist = interaction.indexOf("persistMeetingMinutesSelectionRecoveryAuthorization(");
+    const enqueue = interaction.indexOf("return env.TECHKNIGHT_EVENTS.send(tenantBody)", persist);
+
+    expect(interactionStart).toBeGreaterThan(-1);
+    expect(persist).toBeGreaterThan(-1);
+    expect(enqueue).toBeGreaterThan(persist);
+  });
+
   it("refreshes the nested tenant context through Company Authority", () => {
     const replyStart = source.indexOf("export async function executeCompanyAuthorityReplyOperation(");
     const replyEnd = source.indexOf("\nasync function processTenantMeetingMinutesSelection", replyStart);
