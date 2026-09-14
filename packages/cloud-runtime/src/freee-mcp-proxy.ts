@@ -1,5 +1,6 @@
 export const FREEE_MCP_PROXY_HOST = "freee-mcp.internal";
 export const FREEE_MCP_PROXY_PATH = "/mcp";
+export const FREEE_RUNTIME_CAPABILITY_ID = "freee:runtime_read";
 
 export interface FreeeMcpProxyEnv {
   FREEE_MCP_BASE_URL?: string;
@@ -23,9 +24,8 @@ const LIFECYCLE_METHODS = new Set([
   "tools/list",
 ]);
 
-// The final Brainbase terminator owns the upstream freee session. Mana only
-// carries protocol-neutral headers to the internal endpoint; upstream session
-// identifiers must never be exposed to the sandbox.
+// Brainbase owns the official upstream MCP session. The mana-facing internal
+// endpoint is intentionally stateless: no Mcp-Session-Id may cross this boundary.
 const MCP_HEADER_ALLOWLIST = new Set([
   "accept",
   "content-type",
@@ -38,6 +38,10 @@ type McpBodyInspection = {
   allowed: boolean;
   requestsToolsList: boolean;
 };
+
+export function hasFreeeRuntimeCapability(capabilityIds: readonly string[]): boolean {
+  return capabilityIds.includes(FREEE_RUNTIME_CAPABILITY_ID);
+}
 
 function isJsonRpcResponse(value: Record<string, unknown>): boolean {
   if (value.jsonrpc !== "2.0" || Object.hasOwn(value, "method")) return false;
@@ -128,7 +132,15 @@ function allowedHeaders(source: Headers): Headers {
   return headers;
 }
 
+function internalSessionStateRejected(): Response {
+  return Response.json({
+    error: "freee_mcp_internal_session_state_forbidden",
+    message: "The Mana-facing freee MCP endpoint must be stateless; Brainbase owns upstream MCP sessions.",
+  }, { status: 502 });
+}
+
 function normalizeResponse(response: Response): Response {
+  if (response.headers.has("mcp-session-id")) return internalSessionStateRejected();
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -163,6 +175,7 @@ async function readLimitedText(response: Response): Promise<string | null> {
 }
 
 async function filterToolsListResponse(response: Response): Promise<Response> {
+  if (response.headers.has("mcp-session-id")) return internalSessionStateRejected();
   if (!response.ok) return normalizeResponse(response);
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   const text = await readLimitedText(response);
@@ -215,6 +228,13 @@ export async function handleFreeeMcpProxyRequest(
   const url = new URL(request.url);
   if (url.hostname !== FREEE_MCP_PROXY_HOST || url.pathname !== FREEE_MCP_PROXY_PATH || request.method !== "POST") {
     return Response.json({ error: "not_found" }, { status: 404 });
+  }
+
+  if (request.headers.has("mcp-session-id")) {
+    return Response.json({
+      error: "freee_mcp_client_session_state_forbidden",
+      message: "The Mana-facing freee MCP endpoint is stateless and does not accept Mcp-Session-Id.",
+    }, { status: 400 });
   }
 
   const baseUrl = configuredBaseUrl(env.FREEE_MCP_BASE_URL);
