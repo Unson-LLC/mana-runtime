@@ -3302,6 +3302,48 @@ async function processTenantMeetingMinutesSelection(input: {
   return { outcome: "completed" };
 }
 
+async function persistMeetingMinutesSelectionRecoveryAuthorization(input: {
+  env: Env;
+  selection: MeetingMinutesSelection;
+  tenantContext: TenantContextEnvelope;
+  expectedScope: ExpectedTenantScope;
+  verifier: TenantRuntimeBoundaryVerifier;
+  now(): string;
+}): Promise<void> {
+  const { env, selection, tenantContext, expectedScope, verifier, now } = input;
+  const recovery: MeetingMinutesRecovery = {
+    kind: "meeting_minutes_recovery",
+    runId: selection.runId,
+    workspaceId: selection.workspaceId,
+    appId: selection.appId,
+    channelId: selection.channelId,
+    threadTs: selection.threadTs,
+    userId: selection.userId,
+    actionTs: selection.actionTs,
+  };
+  const effects = createMeetingMinutesTenantEffectGuard({
+    env, tenant_context: tenantContext, expected_scope: expectedScope, verifier, now,
+  });
+  await effects.boundary("durable_object", async () => {
+    const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+      tenantContext.tenant.tenant_id, selection.workspaceId, selection.runId,
+    ));
+    const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+    await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+      const run = await loadMeetingMinutesRun(workspace.fs, selection.runId);
+      if (!run || run.workspaceId !== selection.workspaceId || run.sourceAppId !== selection.appId ||
+        run.sourceChannelId !== selection.channelId || run.sourceThreadTs !== selection.threadTs) {
+        deny("durable_object", "CROSS_TENANT_CANDIDATE");
+      }
+      run.recoveryAuthorization = meetingMinutesRecoveryAuthorization(
+        tenantContext, expectedScope, recovery,
+      );
+      run.updatedAt = now();
+      await saveMeetingMinutesRun(workspace.fs, run);
+    });
+  });
+}
+
 async function processTenantMeetingMinutesRedo(input: {
   env: Env;
   config: ReturnType<typeof meetingMinutesRuntimeConfig>;
@@ -4554,17 +4596,32 @@ export default {
             now: new Date().toISOString(),
             resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
           });
-          return command.kind === "meeting_minutes_selection"
-            ? env.TECHKNIGHT_EVENTS.send({
-                schema_version: "1.0",
-                tenant_context: resolved.tenant_context,
-                payload: command,
-              })
-            : env.TECHKNIGHT_EVENTS.send({
-                schema_version: "1.0",
-                tenant_context: resolved.tenant_context,
-                payload: command,
-              });
+          if (command.kind === "meeting_minutes_selection") {
+            const tenantBody: TenantQueueBody<MeetingMinutesSelection> = {
+              schema_version: "1.0",
+              tenant_context: resolved.tenant_context,
+              payload: command,
+            };
+            const expectedScope = expectedTenantMeetingMinutesSelectionScope(env, tenantBody);
+            const verifier = new TenantRuntimeBoundaryVerifier({
+              read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            });
+            await persistMeetingMinutesSelectionRecoveryAuthorization({
+              env,
+              selection: command,
+              tenantContext: resolved.tenant_context,
+              expectedScope,
+              verifier,
+              now: () => new Date().toISOString(),
+            });
+            return env.TECHKNIGHT_EVENTS.send(tenantBody);
+          }
+          return env.TECHKNIGHT_EVENTS.send({
+            schema_version: "1.0",
+            tenant_context: resolved.tenant_context,
+            payload: command,
+          });
         }, async (identity, destination) => {
           const effects = await resolveInteractionEffects(identity, destination);
           canonicalInteractionTenantId = effects.tenant_id;
