@@ -248,11 +248,11 @@ async function mapProviderRequest(
       if (operation) return { provider_operation: `nocodb.records.${operation}`, request: addBody(withQuery(url, { path_params })) };
     }
     if (segments.slice(0, 4).join("/") === "api/v2/meta/bases" && segments[5] === "tables" && segments.length === 6 && method === "GET") {
-      return { provider_operation: "nocodb.tables.list", request: { path_params: { project: segments[4] } };
+      return { provider_operation: "nocodb.tables.list", request: { path_params: { project: segments[4] } } };
     }
     if (segments.slice(0, 3).join("/") === "api/v2/meta" && segments.length === 5) {
       if (segments[3] === "tables" && method === "GET") {
-        return { provider_operation: "nocodb.tables.get", request: { path_params: { table: segments[4] } };
+        return { provider_operation: "nocodb.tables.get", request: { path_params: { table: segments[4] } } };
       }
       if (segments[3] === "columns" && method === "PATCH") {
         return { provider_operation: "nocodb.columns.update", request: addBody({ path_params: { column: segments[4] } }) };
