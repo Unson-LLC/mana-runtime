@@ -99,7 +99,10 @@ function destinationIsValid(value: MeetingMinutesDestination): boolean {
       new Set(taskProjectCodes).size === taskProjectCodes.length);
 }
 export function validateMeetingMinutesDestinations(destinations: readonly MeetingMinutesDestination[]): void {
-  if (!destinations.length || destinations.length > 25 || destinations.some((item) => !destinationIsValid(item)) ||
+  const organizationCounts = destinations.reduce<Map<string, number>>((counts, item) =>
+    counts.set(item.organization?.id ?? "", (counts.get(item.organization?.id ?? "") ?? 0) + 1), new Map());
+  if (!destinations.length || destinations.length > 50 || [...organizationCounts.values()].some((count) => count > 25) ||
+    destinations.some((item) => !destinationIsValid(item)) ||
     new Set(destinations.map((item) => item.id)).size !== destinations.length ||
     destinations.some((item) => destinations.some((candidate) => candidate.organization.id === item.organization.id &&
       candidate.organization.name !== item.organization.name)) ||

@@ -109,6 +109,14 @@ describe("meeting minutes pipeline", () => {
     ])).toThrow("meeting_minutes_destinations_invalid");
   });
 
+  it("rejects more than 25 project buttons in one organization", () => {
+    expect(() => validateMeetingMinutesDestinations(Array.from({ length: 26 }, (_, index) => ({
+      ...destination,
+      id: `destination-${index}`,
+      slackChannelId: `CDEST${index}`,
+    })))).toThrow("meeting_minutes_destinations_invalid");
+  });
+
   it("stops a placeholder generation before GitHub, Slack, task, or board side effects", async () => {
     const fs = new MemoryFs();
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
