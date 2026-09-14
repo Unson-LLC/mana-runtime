@@ -105,12 +105,13 @@ describe("freee MCP proxy", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain(JSON.stringify({
+    const text = await response.text();
+    expect(text).toContain(JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       result: { tools: [{ name: "freee_api_get" }] },
     }));
-    expect(await (async () => "")()).not.toContain("freee_api_patch");
+    expect(text).not.toContain("freee_api_patch");
   });
 
   it("allows MCP lifecycle traffic and rejects redirects", async () => {
