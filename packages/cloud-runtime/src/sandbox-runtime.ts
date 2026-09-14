@@ -16,6 +16,7 @@ import type { TaskBoardRepairEvent } from "./task-board.js";
 import { handleNocodbProxyRequest, NOCODB_PROXY_HOST, type NocodbProxyEnv } from "./nocodb-proxy.js";
 import { BRAINBASE_MCP_PROXY_HOST, handleBrainbaseMcpProxyRequest, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
 import { GOOGLE_DRIVE_MCP_PROXY_HOST, handleGoogleDriveMcpProxyRequest, type GoogleDriveMcpProxyEnv } from "./google-drive-mcp-proxy.js";
+import { FREEE_MCP_PROXY_HOST, handleFreeeMcpProxyRequest, type FreeeMcpProxyEnv } from "./freee-mcp-proxy.js";
 import { createRuntimeGatewayProxyHandler, RUNTIME_GATEWAY_PROXY_HOST, type RuntimeGatewayProxyEnv } from "./runtime-gateway-proxy.js";
 import {
   authorizeTenantProviderOutbound,
@@ -32,7 +33,7 @@ import type { CompanyAuthorityRuntimeConfigEnv } from "./multitenancy/company-au
 export { ContainerProxy } from "@cloudflare/sandbox";
 export { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
 
-export interface SandboxRuntimeEnv extends CompanyAuthorityRuntimeConfigEnv, SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv, GoogleDriveMcpProxyEnv, RuntimeGatewayProxyEnv, RuntimeAnthropicOutboundEnv {
+export interface SandboxRuntimeEnv extends CompanyAuthorityRuntimeConfigEnv, SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv, GoogleDriveMcpProxyEnv, FreeeMcpProxyEnv, RuntimeGatewayProxyEnv, RuntimeAnthropicOutboundEnv {
   TECHKNIGHT_SANDBOX: DurableObjectNamespace<TechKnightSandbox>;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
   RUNTIME_PROJECT_CODES?: string;
@@ -72,7 +73,7 @@ export const DEVELOPMENT_CALLBACK_PROXY_HOST = "development-callback.internal";
 export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
   interceptHttps = true;
   enableInternet = false;
-  allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST];
+  allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, FREEE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST];
 }
 
 async function authorizeTenantRuntimeProxy(
@@ -181,6 +182,10 @@ TechKnightSandbox.outboundByHost = {
         GOOGLE_DRIVE_MCP_BASE_URL: env.GOOGLE_DRIVE_MCP_BASE_URL,
         GOOGLE_DRIVE_MCP_TOKEN: env.GOOGLE_DRIVE_MCP_TOKEN,
       }),
+  ),
+  [FREEE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch) =>
+      handleFreeeMcpProxyRequest(authorized, { FREEE_MCP_BASE_URL: env.FREEE_MCP_BASE_URL }, credentialFetch),
   ),
   [RUNTIME_GATEWAY_PROXY_HOST]: async (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
     request, env, await runtimeGatewayBoundaries(request),
