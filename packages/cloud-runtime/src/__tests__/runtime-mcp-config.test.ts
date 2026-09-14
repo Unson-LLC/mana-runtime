@@ -3,11 +3,11 @@ import { buildRuntimeMcpConfig } from "../runtime-mcp-config.js";
 describe("placement-scoped runtime MCP config", () => {
   it("exposes only the MCP servers declared by the placement", () => {
     const config = buildRuntimeMcpConfig({
-      mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
+      mcp: ["brainbase", "nocodb", "gateway", "google-drive", "freee"],
       gatewayTools: ["list_tasks", "get_employee"],
     }, "tb_opaque_operation_handle");
 
-    expect(Object.keys(config.mcpServers)).toEqual(["brainbase", "nocodb", "gateway", "google-drive"]);
+    expect(Object.keys(config.mcpServers)).toEqual(["brainbase", "nocodb", "gateway", "google-drive", "freee"]);
     expect(config.mcpServers.gateway).toEqual({
       command: "node",
       args: ["/opt/mana/gateway-mcp-server.mjs"],
@@ -25,6 +25,11 @@ describe("placement-scoped runtime MCP config", () => {
     expect(config.mcpServers["google-drive"]).toEqual({
       type: "http",
       url: "https://google-drive-mcp.internal/mcp",
+      headers: { "x-mana-tenant-boundary-handle": "tb_opaque_operation_handle" },
+    });
+    expect(config.mcpServers.freee).toEqual({
+      type: "http",
+      url: "https://freee-mcp.internal/mcp",
       headers: { "x-mana-tenant-boundary-handle": "tb_opaque_operation_handle" },
     });
     expect(config.mcpServers.nocodb).toEqual({
