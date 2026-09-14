@@ -507,6 +507,57 @@ describe("tenant runtime deploy readiness", () => {
     });
   });
 
+  it("rejects incomplete company authority route bindings", () => {
+    const config = structuredClone(completeConfig);
+    const vars = config.vars as Record<string, string>;
+    vars.RUNTIME_PLACEMENTS_JSON = JSON.stringify([{
+      placementId: "cursorvers",
+      channelId: "C-CURSORVERS",
+      projectCodes: ["unson"],
+    }]);
+    vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON = JSON.stringify([{
+      workspace_id: "T-TEST",
+      channel_id: "C-CURSORVERS",
+      authenticated_subject_id: "U-OPERATOR",
+    }]);
+    vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON = JSON.stringify({});
+    vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON = JSON.stringify({});
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["RUNTIME_AUTHORITY_PROJECT_IDS_JSON"],
+    });
+
+    vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON = JSON.stringify({ cursorvers: ["prj_unson"] });
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON"],
+    });
+  });
+
+  it("rejects a rollout user outside the placement operator audience", () => {
+    const config = structuredClone(completeConfig);
+    const vars = config.vars as Record<string, string>;
+    vars.RUNTIME_PLACEMENTS_JSON = JSON.stringify([{
+      placementId: "cursorvers",
+      channelId: "C-CURSORVERS",
+      projectCodes: ["unson"],
+      audience: { type: "operator", allowedUserIds: ["U-OTHER"] },
+    }]);
+    vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON = JSON.stringify([{
+      workspace_id: "T-TEST",
+      channel_id: "C-CURSORVERS",
+      authenticated_subject_id: "U-OPERATOR",
+    }]);
+    vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON = JSON.stringify({ cursorvers: ["prj_unson"] });
+    vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON = JSON.stringify({ prj_unson: "unson" });
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["RUNTIME_PLACEMENTS_JSON"],
+    });
+  });
+
   it("does not require legacy Brainbase URL vars because runtime calls the Service Binding", () => {
     const config = structuredClone(completeConfig);
     for (const name of [
