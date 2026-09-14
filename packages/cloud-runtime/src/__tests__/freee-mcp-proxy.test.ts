@@ -1,0 +1,302 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  FREEE_RUNTIME_CAPABILITY_ID,
+  handleFreeeMcpProxyRequest,
+  hasFreeeRuntimeCapability,
+} from "../freee-mcp-proxy.js";
+
+const ENV = { FREEE_MCP_BASE_URL: "https://brainbase-freee.internal" };
+
+describe("freee MCP proxy", () => {
+  it("forwards read-only tool calls with only allowlisted protocol headers", async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("cookie")).toBeNull();
+      expect(headers.get("x-untrusted")).toBeNull();
+      expect(headers.get("mcp-session-id")).toBeNull();
+      expect(headers.get("mcp-protocol-version")).toBe("2025-06-18");
+      return new Response(JSON.stringify({ jsonrpc: "2.0", result: { content: [] } }), {
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": "upstream-secret=1",
+          "x-upstream-secret": "nope",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer caller-secret",
+          cookie: "sid=secret",
+          "x-untrusted": "nope",
+          "mcp-protocol-version": "2025-06-18",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "freee_api_get", arguments: { path: "/api/1/deals" } },
+        }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("x-upstream-secret")).toBeNull();
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://brainbase-freee.internal/mcp",
+      expect.objectContaining({ method: "POST", redirect: "manual" }),
+    );
+  });
+
+  it("rejects client session state instead of silently dropping it", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        headers: { "mcp-session-id": "session-must-not-cross" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "freee_mcp_client_session_state_forbidden" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("fails visibly when the internal Brainbase endpoint tries to create session state", async () => {
+    const fetchImpl = vi.fn(async () => new Response(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } }),
+      { headers: { "content-type": "application/json", "mcp-session-id": "unexpected-internal-session" } },
+    )) as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ error: "freee_mcp_internal_session_state_forbidden" });
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+  });
+
+  it("requires the explicit signed runtime capability id", () => {
+    expect(FREEE_RUNTIME_CAPABILITY_ID).toBe("freee:runtime_read");
+    expect(hasFreeeRuntimeCapability([])).toBe(false);
+    expect(hasFreeeRuntimeCapability(["mcp_gateway", "brainbase_proxy"])).toBe(false);
+    expect(hasFreeeRuntimeCapability(["freee:runtime_read"])).toBe(true);
+  });
+
+  it.each([
+    "freee_api_post",
+    "freee_api_put",
+    "freee_api_patch",
+    "freee_api_delete",
+    "freee_clear_auth",
+    "freee_set_current_company",
+  ])("rejects non-read-only tool %s before upstream forwarding", async (tool) => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: {} } }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+    expect(response.status).toBe(403);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each(["resources/read", "resources/subscribe", "prompts/get", "completion/complete"])(
+    "rejects non-allowlisted MCP method %s",
+    async (method) => {
+      const fetchImpl = vi.fn() as unknown as typeof fetch;
+      const response = await handleFreeeMcpProxyRequest(
+        new Request("https://freee-mcp.internal/mcp", {
+          method: "POST",
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: {} }),
+        }),
+        ENV,
+        fetchImpl,
+      );
+      expect(response.status).toBe(403);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows a well-formed JSON-RPC response without a method", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 9, result: {} }), {
+      headers: { "content-type": "application/json", "set-cookie": "secret=1" },
+    })) as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 9, result: { roots: [] } }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows cancellation lifecycle notifications", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 202 })) as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+    expect(response.status).toBe(202);
+  });
+
+  it("rejects malformed JSON locally", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", { method: "POST", body: "{" }),
+      ENV,
+      fetchImpl,
+    );
+    expect(response.status).toBe(400);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("filters non-read-only tools out of JSON tools/list discovery", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          { name: "freee_api_get", description: "read" },
+          { name: "freee_api_post", description: "write" },
+          { name: "freee_set_current_company", description: "changes target company" },
+          { name: "freee_current_user", description: "whoami" },
+        ],
+      },
+    })) as unknown as typeof fetch;
+
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          { name: "freee_api_get", description: "read" },
+          { name: "freee_current_user", description: "whoami" },
+        ],
+      },
+    });
+  });
+
+  it("filters non-read-only tools out of CRLF SSE tools/list discovery", async () => {
+    const upstream = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { tools: [{ name: "freee_api_get" }, { name: "freee_api_patch" }] },
+    };
+    const fetchImpl = vi.fn(async () => new Response(`event: message\r\ndata: ${JSON.stringify(upstream)}\r\n\r\n`, {
+      headers: { "content-type": "text/event-stream", "set-cookie": "secret=1" },
+    })) as unknown as typeof fetch;
+
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    const text = await response.text();
+    expect(text).toContain("\r\n");
+    expect(text).toContain(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { tools: [{ name: "freee_api_get" }] },
+    }));
+    expect(text).not.toContain("freee_api_patch");
+  });
+
+  it("normalizes error response headers too", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: "upstream" }), {
+      status: 401,
+      headers: { "content-type": "application/json", "set-cookie": "secret=1", "x-debug": "hidden" },
+    })) as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("x-debug")).toBeNull();
+  });
+
+  it("allows known MCP lifecycle traffic and rejects redirects", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } })) as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+    expect(response.status).toBe(502);
+  });
+
+  it("fails closed when the upstream URL is absent or invalid", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    expect((await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", { method: "POST", body: "{}" }),
+      {},
+      fetchImpl,
+    )).status).toBe(503);
+    expect((await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", { method: "POST", body: "{}" }),
+      { FREEE_MCP_BASE_URL: "http://brainbase-freee.internal" },
+      fetchImpl,
+    )).status).toBe(503);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-MCP paths", async () => {
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/health"),
+      ENV,
+      vi.fn() as unknown as typeof fetch,
+    );
+    expect(response.status).toBe(404);
+  });
+});

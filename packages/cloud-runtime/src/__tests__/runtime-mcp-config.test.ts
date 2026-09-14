@@ -1,13 +1,13 @@
 import { buildRuntimeMcpConfig } from "../runtime-mcp-config.js";
 
 describe("placement-scoped runtime MCP config", () => {
-  it("exposes only the MCP servers declared by the placement", () => {
+  it("exposes only the MCP servers declared by the placement when freee is explicitly enabled", () => {
     const config = buildRuntimeMcpConfig({
-      mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
+      mcp: ["brainbase", "nocodb", "gateway", "google-drive", "freee"],
       gatewayTools: ["list_tasks", "get_employee"],
-    }, "tb_opaque_operation_handle");
+    }, "tb_opaque_operation_handle", { enableFreee: true });
 
-    expect(Object.keys(config.mcpServers)).toEqual(["brainbase", "nocodb", "gateway", "google-drive"]);
+    expect(Object.keys(config.mcpServers)).toEqual(["brainbase", "nocodb", "gateway", "google-drive", "freee"]);
     expect(config.mcpServers.gateway).toEqual({
       command: "node",
       args: ["/opt/mana/gateway-mcp-server.mjs"],
@@ -27,11 +27,23 @@ describe("placement-scoped runtime MCP config", () => {
       url: "https://google-drive-mcp.internal/mcp",
       headers: { "x-mana-tenant-boundary-handle": "tb_opaque_operation_handle" },
     });
+    expect(config.mcpServers.freee).toEqual({
+      type: "http",
+      url: "https://freee-mcp.internal/mcp",
+      headers: { "x-mana-tenant-boundary-handle": "tb_opaque_operation_handle" },
+    });
     expect(config.mcpServers.nocodb).toEqual({
       command: "node",
       args: ["/opt/mana/nocodb-mcp-server.mjs"],
       env: { MANA_TENANT_BOUNDARY_HANDLE: "tb_opaque_operation_handle" },
     });
+  });
+
+  it("fails closed when freee is declared without explicit enablement", () => {
+    expect(() => buildRuntimeMcpConfig(
+      { mcp: ["brainbase", "freee"], gatewayTools: [] },
+      "tb_opaque_operation_handle",
+    )).toThrow(expect.objectContaining({ code: "freee_mcp_not_enabled" }));
   });
 
   it("does not expose undeclared servers or gateway tools", () => {
@@ -42,7 +54,7 @@ describe("placement-scoped runtime MCP config", () => {
     expect(config.mcpServers).toEqual({
       brainbase: {
         command: "node",
-        args: ["/opt/mana/brainbase-mcp-server.mjs"],
+        args: [SERVER_PATHS.brainbase],
         alwaysLoad: true,
         env: { MANA_TENANT_BOUNDARY_HANDLE: "tb_opaque_operation_handle" },
       },
@@ -69,3 +81,7 @@ describe("placement-scoped runtime MCP config", () => {
       .toThrow(expect.objectContaining({ code: "runtime_gateway_not_enabled" }));
   });
 });
+
+const SERVER_PATHS = {
+  brainbase: "/opt/mana/brainbase-mcp-server.mjs",
+} as const;

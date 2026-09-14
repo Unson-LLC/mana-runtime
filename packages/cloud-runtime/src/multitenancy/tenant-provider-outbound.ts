@@ -30,6 +30,7 @@ export interface TenantProviderOutboundEnv {
   BRAINBASE_GRAPH_API_BASE_URL?: string;
   BRAINBASE_MCP_BASE_URL?: string;
   GOOGLE_DRIVE_MCP_BASE_URL?: string;
+  FREEE_MCP_BASE_URL?: string;
   NOCODB_URL?: string;
   TENANT_RUNTIME_STATE: TenantBoundaryContextNamespace;
 }

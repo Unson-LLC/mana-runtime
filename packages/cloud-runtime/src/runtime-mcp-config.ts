@@ -15,6 +15,10 @@ export interface RuntimeMcpConfig {
   mcpServers: Record<string, RuntimeMcpServerConfig>;
 }
 
+export interface RuntimeMcpBuildOptions {
+  enableFreee?: boolean;
+}
+
 export class RuntimeMcpConfigError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -31,12 +35,15 @@ const SERVER_PATHS = Object.freeze({
 export function buildRuntimeMcpConfig(capabilities: {
   mcp: readonly string[];
   gatewayTools: readonly string[];
-}, tenantBoundaryHandle: string): RuntimeMcpConfig {
+}, tenantBoundaryHandle: string, options: RuntimeMcpBuildOptions = {}): RuntimeMcpConfig {
   if (!tenantBoundaryHandle.trim()) {
     throw new RuntimeMcpConfigError("tenant_boundary_required");
   }
   if (capabilities.gatewayTools.length > 0 && !capabilities.mcp.includes("gateway")) {
     throw new RuntimeMcpConfigError("runtime_gateway_not_enabled");
+  }
+  if (capabilities.mcp.includes("freee") && options.enableFreee !== true) {
+    throw new RuntimeMcpConfigError("freee_mcp_not_enabled");
   }
   const mcpServers: Record<string, RuntimeMcpServerConfig> = {};
   for (const name of capabilities.mcp) {
@@ -53,6 +60,14 @@ export function buildRuntimeMcpConfig(capabilities: {
       mcpServers[name] = {
         type: "http",
         url: "https://google-drive-mcp.internal/mcp",
+        headers: { "x-mana-tenant-boundary-handle": tenantBoundaryHandle },
+      };
+      continue;
+    }
+    if (name === "freee") {
+      mcpServers[name] = {
+        type: "http",
+        url: "https://freee-mcp.internal/mcp",
         headers: { "x-mana-tenant-boundary-handle": tenantBoundaryHandle },
       };
       continue;
