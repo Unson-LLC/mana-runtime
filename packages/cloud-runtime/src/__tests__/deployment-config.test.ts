@@ -242,7 +242,7 @@ describe("会社別Cloudflare deployment", () => {
         channelId: "C0BHVFJGFK3",
         projectCodes: ["unson"],
         taskBoardEnabled: true,
-        audience: { type: "operator", allowedUserIds: ["U08SKE17CGJ"] },
+        audience: { type: "operator", allowedUserIds: ["U088D1HBY6L", "U08SKE17CGJ"] },
         respondTo: { im: "never", mpim: "never", channel: "mention", engagedThreads: true },
       },
       { placementId: "minutes-kartz", channelId: "C0BQA5BGTEH", projectCodes: ["kartz"], taskBoardEnabled: true },
@@ -322,11 +322,23 @@ describe("会社別Cloudflare deployment", () => {
     });
   });
 
-  it("allows Otawara to mention Mana only in the Cursorvers channel", () => {
-    expect(JSON.parse(unson.vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON)).toContainEqual({
-      workspace_id: "T0882T8N9UH",
-      channel_id: "C0BHVFJGFK3",
-      authenticated_subject_id: "U08SKE17CGJ",
+  it("routes both authorized Cursorvers operators through company authority", () => {
+    const rollout = JSON.parse(unson.vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON) as Array<{
+      workspace_id: string; channel_id: string; authenticated_subject_id?: string;
+    }>;
+    const cursorversUsers = rollout
+      .filter((entry) => entry.workspace_id === "T0882T8N9UH" && entry.channel_id === "C0BHVFJGFK3")
+      .map((entry) => entry.authenticated_subject_id)
+      .filter((userId): userId is string => userId !== undefined)
+      .sort();
+    expect(cursorversUsers).toEqual(["U088D1HBY6L", "U08SKE17CGJ"].sort());
+
+    const cursorversPlacement = (JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON) as Array<{
+      placementId: string; audience?: { type: string; allowedUserIds: string[] };
+    }>).find((placement) => placement.placementId === "minutes-cursorvers");
+    expect(cursorversPlacement?.audience).toEqual({
+      type: "operator",
+      allowedUserIds: ["U088D1HBY6L", "U08SKE17CGJ"],
     });
     expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)).toMatchObject({
       "minutes-cursorvers": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
@@ -631,6 +643,7 @@ describe("会社別Cloudflare deployment", () => {
       "minutes-cursorvers": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
       "mana-dev-biz": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
       "unson-sato": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
+      "mana-autonomy": ["prj_01KGCS8CAJKKDWACPNK1E5WX8H"],
     });
     const taskWritePolicy = JSON.parse(unson.vars.TASK_WRITE_POLICY_JSON) as {
       rules: Array<{ effect: string; placements: string[]; projects: string[] }>;
@@ -641,6 +654,7 @@ describe("会社別Cloudflare deployment", () => {
       rule.effect === "auto" && rule.placements.includes("mana-dev-biz")
     )?.projects).toEqual(["mana"]);
     expect(JSON.parse(unson.vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON)).toEqual({
+      prj_01KGCS8C1PSSXPHXPBX1D4CKDT: "unson",
       prj_01KGHVCMA35JHSMXTSWQAS04PS: "mana",
       prj_01KGCS8CAJKKDWACPNK1E5WX8H: "brainbase",
     });

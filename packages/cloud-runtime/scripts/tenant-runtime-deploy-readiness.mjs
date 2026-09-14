@@ -363,6 +363,65 @@ function parsePlacements(value) {
   }
 }
 
+function companyAuthorityRouteBindingIssues(vars, placements) {
+  if (!nonEmpty(vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON)) return [];
+
+  let rollout;
+  let authorityProjectIds;
+  let judgmentProjects;
+  try {
+    rollout = JSON.parse(vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON);
+  } catch {
+    return ["MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON"];
+  }
+  if (!Array.isArray(rollout)) return ["MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON"];
+  try {
+    authorityProjectIds = JSON.parse(vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON ?? "");
+  } catch {
+    authorityProjectIds = undefined;
+  }
+  try {
+    judgmentProjects = JSON.parse(vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON ?? "");
+  } catch {
+    judgmentProjects = undefined;
+  }
+
+  const issues = new Set();
+  for (const entry of rollout) {
+    if (!plainObject(entry) || !nonEmpty(entry.channel_id)) {
+      issues.add("MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON");
+      continue;
+    }
+    const placement = placements.find((candidate) =>
+      plainObject(candidate) && candidate.channelId === entry.channel_id);
+    if (!placement || !nonEmpty(placement.placementId)) {
+      issues.add("RUNTIME_PLACEMENTS_JSON");
+      continue;
+    }
+    if (nonEmpty(entry.authenticated_subject_id)
+      && placement.audience?.type === "operator"
+      && (!Array.isArray(placement.audience.allowedUserIds)
+        || !placement.audience.allowedUserIds.includes(entry.authenticated_subject_id))) {
+      issues.add("RUNTIME_PLACEMENTS_JSON");
+    }
+
+    const canonicalIds = plainObject(authorityProjectIds)
+      ? authorityProjectIds[placement.placementId]
+      : undefined;
+    if (!Array.isArray(canonicalIds) || canonicalIds.length !== 1 || !nonEmpty(canonicalIds[0])) {
+      issues.add("RUNTIME_AUTHORITY_PROJECT_IDS_JSON");
+      continue;
+    }
+    const projectCode = plainObject(judgmentProjects) ? judgmentProjects[canonicalIds[0]] : undefined;
+    if (!nonEmpty(projectCode)
+      || !Array.isArray(placement.projectCodes)
+      || !placement.projectCodes.includes(projectCode)) {
+      issues.add("BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON");
+    }
+  }
+  return [...issues];
+}
+
 function validMeetingMinutesDestinationSlackBindings(vars) {
   if (vars.MEETING_MINUTES_ENABLED !== "true") return true;
   if (!nonEmpty(vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON)) return false;
@@ -550,6 +609,7 @@ export function assessTenantRuntimeDeploymentConfig(config, secretNames) {
     missing.add("TENANT_RUNTIME_STATE_MIGRATION");
   }
   const placements = parsePlacements(vars.RUNTIME_PLACEMENTS_JSON);
+  for (const issue of companyAuthorityRouteBindingIssues(vars, placements)) missing.add(issue);
   const taskBoardEnabled = vars.RUNTIME_TASK_BOARD_ENABLED === "true"
     || placements.some((placement) => placement?.taskBoardEnabled === true);
   if (taskBoardEnabled && !nonEmpty(vars.TASK_BOARD_TARGETS_JSON)) missing.add("TASK_BOARD_TARGETS_JSON");

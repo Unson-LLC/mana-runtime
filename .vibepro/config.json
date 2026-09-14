@@ -439,8 +439,20 @@
         "started_at": null,
         "due_at": null,
         "contract_type": null
+      },
+      {
+        "story_id": "story-company-authority-user-route-parity",
+        "title": "Company Authorityの利用者別経路を統一する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "contract_type": null
       }
     ],
-    "current_story_id": "meeting-minutes-stage-resume"
+    "current_story_id": "story-company-authority-user-route-parity"
   }
 }
