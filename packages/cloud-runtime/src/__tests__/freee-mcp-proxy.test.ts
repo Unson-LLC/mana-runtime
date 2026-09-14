@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleFreeeMcpProxyRequest } from "../freee-mcp-proxy.js";
+import {
+  FREEE_RUNTIME_CAPABILITY_ID,
+  handleFreeeMcpProxyRequest,
+  hasFreeeRuntimeCapability,
+} from "../freee-mcp-proxy.js";
 
 const ENV = { FREEE_MCP_BASE_URL: "https://brainbase-freee.internal" };
 
@@ -28,7 +32,6 @@ describe("freee MCP proxy", () => {
           authorization: "Bearer caller-secret",
           cookie: "sid=secret",
           "x-untrusted": "nope",
-          "mcp-session-id": "upstream-session-must-not-cross",
           "mcp-protocol-version": "2025-06-18",
           "content-type": "application/json",
         },
@@ -51,6 +54,49 @@ describe("freee MCP proxy", () => {
       "https://brainbase-freee.internal/mcp",
       expect.objectContaining({ method: "POST", redirect: "manual" }),
     );
+  });
+
+  it("rejects client session state instead of silently dropping it", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        headers: { "mcp-session-id": "session-must-not-cross" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "freee_mcp_client_session_state_forbidden" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("fails visibly when the internal Brainbase endpoint tries to create session state", async () => {
+    const fetchImpl = vi.fn(async () => new Response(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } }),
+      { headers: { "content-type": "application/json", "mcp-session-id": "unexpected-internal-session" } },
+    )) as unknown as typeof fetch;
+    const response = await handleFreeeMcpProxyRequest(
+      new Request("https://freee-mcp.internal/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      }),
+      ENV,
+      fetchImpl,
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ error: "freee_mcp_internal_session_state_forbidden" });
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+  });
+
+  it("requires the explicit signed runtime capability id", () => {
+    expect(FREEE_RUNTIME_CAPABILITY_ID).toBe("freee:runtime_read");
+    expect(hasFreeeRuntimeCapability([])).toBe(false);
+    expect(hasFreeeRuntimeCapability(["mcp_gateway", "brainbase_proxy"])).toBe(false);
+    expect(hasFreeeRuntimeCapability(["freee:runtime_read"])).toBe(true);
   });
 
   it.each([
